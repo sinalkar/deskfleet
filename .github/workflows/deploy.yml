@@ -4,8 +4,16 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   publish-and-deploy:
+    name: Publish SHA Image & Deploy to Cloud Run
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,8 +39,10 @@ jobs:
         with:
           context: apps/api
           push: true
+          # `latest` and semver tags are owned by release-image.yml (on release
+          # published). Deploy only publishes an immutable per-commit SHA tag,
+          # which is what Cloud Run pins to below.
           tags: |
-            ghcr.io/${{ github.repository }}/deskfleet-api:latest
             ghcr.io/${{ github.repository }}/deskfleet-api:${{ github.sha }}
 
       # 3) Deploy to Cloud Run.

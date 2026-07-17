@@ -76,7 +76,8 @@ packages/   shared constants (mirrored into the API for isolated builds)
 infra/      Prometheus scrape config + provisioned Grafana dashboard
 tests/      deterministic safety + contract suite (no API keys)
 scripts/    seed_tickets.py, smoke_test.sh
-.github/    ci.yml (lint+test+docker), deploy.yml (ghcr.io + Cloud Run)
+.github/    workflows/ (ci, security, deploy, release-please, release-image)
+            release-please-config.json + .release-please-manifest.json
 ```
 
 ---
@@ -174,13 +175,76 @@ The suite covers the spec's safety contracts:
 
 ## CI/CD
 
-- **`ci.yml`** (every push/PR): `ruff check` → `pytest` → `docker build` of both images.
-- **`deploy.yml`** (main only): re-run tests → publish `deskfleet-api` to
-  `ghcr.io` → deploy to Cloud Run, pulling `OPENAI_API_KEY` / `LANGCHAIN_API_KEY`
-  from GCP Secret Manager.
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| **`ci.yml`** | every push/PR | `ruff check` → `pytest` → `docker build` of both images |
+| **`security.yml`** | PRs + push to `main` | CodeQL, dependency review, Gitleaks, Trivy (see below) |
+| **`deploy.yml`** | push to `main` | re-run tests → publish per-commit SHA image to `ghcr.io` → deploy to Cloud Run |
+| **`release-please.yml`** | push to `main` | maintain the release PR, `CHANGELOG.md`, version tag, GitHub Release |
+| **`release-image.yml`** | GitHub Release *published* | build & push the API image to GHCR with semver + `latest` tags |
 
-Required repo secrets: `GCP_SA_KEY`, `GCP_REGION`, plus `OPENAI_API_KEY` /
-`LANGCHAIN_API_KEY` in GCP Secret Manager. `GITHUB_TOKEN` is automatic.
+Required repo secrets for deploy: `GCP_SA_KEY`, `GCP_REGION`, plus `OPENAI_API_KEY` /
+`LANGCHAIN_API_KEY` in GCP Secret Manager. `GITHUB_TOKEN` is automatic and used by
+the security, release-please, and release-image workflows.
+
+### Security scanning
+
+`security.yml` runs on every pull request and on pushes to `main`. All jobs use
+least-privilege permissions and workflow-level `concurrency` to cancel superseded runs.
+
+- **CodeQL** — static analysis targeting Python; results upload to the **Security → Code
+  scanning** tab (SARIF).
+- **Dependency Review** — flags vulnerable/insecure dependency changes; **runs on pull
+  requests only** (the action is unsupported on push) and fails on `high`+ severity.
+- **Gitleaks** — secret scanning across full git history; uses the built-in
+  `GITHUB_TOKEN`, so **no paid license is required** for public/personal repos.
+- **Trivy** — filesystem scan for vulnerabilities, misconfigurations, and secrets.
+  Runs twice: one pass uploads a full SARIF report to code scanning, a second pass
+  **fails the build on HIGH/CRITICAL** (fixable) findings so PRs stay blocked.
+
+### Releases (Release Please + Conventional Commits)
+
+Releases are automated from [Conventional Commits](https://www.conventionalcommits.org/):
+
+1. Merges to `main` update a standing **release PR** that accumulates the changelog and
+   the next semantic version (a **`simple`** release component tracked in
+   `.github/.release-please-manifest.json`).
+2. Merging that release PR tags the commit (e.g. `v0.2.0`), publishes a **GitHub
+   Release**, and updates `CHANGELOG.md`.
+3. Publishing the release triggers **`release-image.yml`**, which builds `apps/api` and
+   pushes to `ghcr.io/<owner>/<repo>/deskfleet-api` tagged with the full version
+   (`0.2.0`), the `MAJOR.MINOR` alias (`0.2`), `latest`, and the bare `MAJOR` alias
+   only once past `1.0.0` (a `0.x` major tag is intentionally skipped as unsafe).
+
+**First-release bootstrap (automatic).** The manifest baseline is `0.0.0` and the
+bootstrap commit carries a one-time `Release-As: 0.1.0` footer, so Release Please cuts
+the **first** release as exactly **`v0.1.0`** — no manual label or post-merge edit is
+required. `Release-As` only affects the release that contains that commit; once `v0.1.0`
+is published the manifest advances to `0.1.0` and every later release resumes normal
+Conventional-Commit bumping (`feat` → minor, `fix` → patch, `feat!`/`BREAKING CHANGE`
+→ major). Do **not** re-use the footer afterward.
+
+Commit message examples that drive the version bump:
+
+```
+feat: add /tickets pagination            # → minor bump (0.1.0 → 0.2.0)
+fix: redact SSN in outbound draft        # → patch bump (0.2.0 → 0.2.1)
+feat!: change /resolve response schema   # → major bump (0.x stays 0, 1.x → 2.0.0)
+docs: clarify allowlist boundary         # → no release (changelog "Other" section)
+```
+
+### Required GitHub repository settings
+
+- **Settings → Actions → General → Workflow permissions:** select **Read and write
+  permissions** (release-please needs `contents: write` to tag/release, though each
+  job also declares its own least-privilege scopes).
+- Enable **Allow GitHub Actions to create and approve pull requests** so release-please
+  can open its release PR.
+- **Settings → Code security:** ensure **Code scanning** is enabled to receive the
+  CodeQL and Trivy SARIF uploads.
+- **Branch protection on `main`** — add these required status checks so security stays
+  blocking: `CodeQL (Python)`, `Dependency Review`, `Gitleaks Secret Scan`,
+  `Trivy Filesystem Scan`, and the CI `test` job.
 
 ---
 
