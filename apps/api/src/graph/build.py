@@ -1,0 +1,43 @@
+"""Compile the DeskFleet StateGraph.
+
+``compile_graph`` accepts an optional :class:`LLMClient` — the dependency
+injection seam. Production passes nothing and gets the configured OpenAI client;
+tests pass a scripted fake.
+"""
+
+from __future__ import annotations
+
+from langgraph.graph import END, START, StateGraph
+
+from src.graph.edges import route_after_review
+from src.graph.llm import LLMClient, build_llm_client
+from src.graph.nodes import (
+    make_classifier,
+    make_researcher,
+    make_responder,
+    make_reviewer,
+)
+from src.graph.state import TicketState
+
+
+def compile_graph(llm: LLMClient | None = None):
+    """Build and compile the classifier→researcher→responder→reviewer graph."""
+    client = llm or build_llm_client()
+
+    graph = StateGraph(TicketState)
+    graph.add_node("classifier", make_classifier(client))
+    graph.add_node("researcher", make_researcher(client))
+    graph.add_node("responder", make_responder(client))
+    graph.add_node("reviewer", make_reviewer(client))
+
+    graph.add_edge(START, "classifier")
+    graph.add_edge("classifier", "researcher")
+    graph.add_edge("researcher", "responder")
+    graph.add_edge("responder", "reviewer")
+    graph.add_conditional_edges(
+        "reviewer",
+        route_after_review,
+        {"responder": "responder", END: END},
+    )
+
+    return graph.compile()

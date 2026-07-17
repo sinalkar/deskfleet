@@ -1,0 +1,5 @@
+# Dev + test dependencies (no API keys required to run the suite)
+-r apps/api/requirements.txt
+pytest==8.*
+pytest-mock==3.*
+ruff==0.6.*
