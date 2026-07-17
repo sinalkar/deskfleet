@@ -1,6 +1,6 @@
 # DeskFleet — Multi-Agent Support Ticket Resolver
 
-**LangGraph + FastAPI + Streamlit · monorepo · Docker Compose · GitHub Actions → Cloud Run**
+**LangGraph + FastAPI + Streamlit · monorepo · Docker Compose · GitHub Actions → GHCR**
 
 DeskFleet resolves support tickets end-to-end with a four-node LangGraph
 `StateGraph` — **Classifier → Researcher → Responder → Reviewer** — running
@@ -144,7 +144,7 @@ module reads `os.environ` directly. See `.env.example` for every variable. Notab
 | Endpoint | Behavior |
 |---|---|
 | `POST /resolve` | `{ticket, order_id?}` → decision, reply, tool_calls, trace URL, latency, cost |
-| `GET /health` | liveness (Cloud Run) |
+| `GET /health` | liveness probe |
 | `GET /metrics` | Prometheus scrape |
 | `GET /tickets?limit=N` | last N resolved tickets from SQLite |
 
@@ -179,13 +179,28 @@ The suite covers the spec's safety contracts:
 |---|---|---|
 | **`ci.yml`** | every push/PR | `ruff check` → `pytest` → `docker build` of both images |
 | **`security.yml`** | PRs + push to `main` | CodeQL, dependency review, Gitleaks, Trivy (see below) |
-| **`deploy.yml`** | push to `main` | re-run tests → publish per-commit SHA image to `ghcr.io` → deploy to Cloud Run |
+| **`publish-image.yml`** | push to `main` | re-run tests → publish immutable per-commit SHA image to `ghcr.io` |
 | **`release-please.yml`** | push to `main` | maintain the release PR, `CHANGELOG.md`, version tag, GitHub Release |
 | **`release-image.yml`** | GitHub Release *published* | build & push the API image to GHCR with semver + `latest` tags |
 
-Required repo secrets for deploy: `GCP_SA_KEY`, `GCP_REGION`, plus `OPENAI_API_KEY` /
-`LANGCHAIN_API_KEY` in GCP Secret Manager. `GITHUB_TOKEN` is automatic and used by
-the security, release-please, and release-image workflows.
+The only secret used by these workflows is `GITHUB_TOKEN`, which GitHub provides
+automatically (image push, security uploads, release-please, release-image). No
+additional repository secrets are required for CI/CD to pass.
+
+### Image publishing
+
+`publish-image.yml` runs on every push to `main`: it runs `pytest` as the publish
+gate, then builds and pushes the immutable per-commit SHA API image to `ghcr.io`.
+It has a single job and no external cloud dependency, so a push to `main` cannot
+fail on deployment configuration.
+
+Runtime deployment is not part of the automated workflows — the SHA image published
+to GHCR is the deployable artifact; roll it out with whatever mechanism your
+environment uses.
+
+### Security scanning versions
+
+Trivy runs via `aquasecurity/trivy-action@v0.36.0` (pinned to a published release tag).
 
 ### Security scanning
 
