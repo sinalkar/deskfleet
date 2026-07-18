@@ -7,6 +7,8 @@ provider-aware, and that costing resolves the (provider, model) price rows.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import pytest
 from src.config import settings
 from src.graph import llm as llm_mod
@@ -45,7 +47,7 @@ def test_groq_provider_routes_to_groq_endpoint(monkeypatch):
     )
     chat = llm_mod.build_chat_model()
     assert type(chat).__name__ == "ChatOpenAI"
-    assert "api.groq.com" in (chat.openai_api_base or "")
+    assert urlparse(chat.openai_api_base).netloc == "api.groq.com"
 
 
 def test_nvidia_provider_routes_to_nim_endpoint(monkeypatch):
@@ -57,7 +59,7 @@ def test_nvidia_provider_routes_to_nim_endpoint(monkeypatch):
         llm_model="meta/llama-3.1-70b-instruct",
     )
     chat = llm_mod.build_chat_model()
-    assert "integrate.api.nvidia.com" in (chat.openai_api_base or "")
+    assert urlparse(chat.openai_api_base).netloc == "integrate.api.nvidia.com"
 
 
 def test_ollama_provider_uses_local_base_url_without_key(monkeypatch):
