@@ -109,8 +109,7 @@ def search_products(query: str = "", category: str | None = None) -> dict[str, A
         products = [
             p
             for p in products
-            if q in str(p.get("title", "")).lower()
-            or q in str(p.get("description", "")).lower()
+            if q in str(p.get("title", "")).lower() or q in str(p.get("description", "")).lower()
         ]
 
     trimmed = [

@@ -20,8 +20,11 @@ _INJECTION_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"you\s+are\s+now\s+(a|an|the)\b", re.I),
     re.compile(r"\bact\s+as\s+(a|an|if)\b", re.I),
     re.compile(r"\bpretend\s+(to\s+be|you\s+are)\b", re.I),
-    re.compile(r"(reveal|show|print|repeat|expose|leak)\s+(me\s+)?(your\s+)?(the\s+)?"
-               r"(system\s+prompt|instructions|prompt|api\s+key|secret)", re.I),
+    re.compile(
+        r"(reveal|show|print|repeat|expose|leak)\s+(me\s+)?(your\s+)?(the\s+)?"
+        r"(system\s+prompt|instructions|prompt|api\s+key|secret)",
+        re.I,
+    ),
     re.compile(r"\bnew\s+(instructions|system\s+prompt|rules)\b", re.I),
     re.compile(r"\boverride\s+(your|the|all)\s+(instructions|rules|safety|guardrails)", re.I),
     re.compile(r"\bdeveloper\s+mode\b", re.I),
