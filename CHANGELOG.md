@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.0](https://github.com/sinalkar/deskfleet/compare/v0.1.0...v0.2.0) (2026-07-18)
+
+
+### Features
+
+* support multiple LLM providers and pricing/cost tracking ([5fe9b0c](https://github.com/sinalkar/deskfleet/commit/5fe9b0cf9da16ae8fa83baf42860f46b76861145))
+* support multiple LLM providers and pricing/cost tracking ([8f15e21](https://github.com/sinalkar/deskfleet/commit/8f15e21fc97f87984cf704158d8fb87cc899fc9d))
+
+
+### Bug Fixes
+
+* resolve CodeQL incomplete URL substring sanitization warning ([4674ef9](https://github.com/sinalkar/deskfleet/commit/4674ef964a17d1b6d35b013fca98f6f54311bab9))
+
 ## 0.1.0 (2026-07-17)
 
 
