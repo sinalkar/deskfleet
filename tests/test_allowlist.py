@@ -12,6 +12,7 @@ def test_off_allowlist_tool_is_blocked_and_never_dispatched(monkeypatch):
 
     # Wrap every allowlisted callable to prove none of them run for a bad name.
     for name, func in list(ALLOWLIST.items()):
+
         def _spy(*a, _n=name, _f=func, **k):
             executed.append(_n)
             return _f(*a, **k)

@@ -80,8 +80,7 @@ def main() -> int:
         if decision == case["expected"]:
             ok += 1
         print(
-            f"[{i}] {match} expected={case['expected']:<8} got={decision:<8} "
-            f"({case['note']})"
+            f"[{i}] {match} expected={case['expected']:<8} got={decision:<8} " f"({case['note']})"
         )
     print(f"\n{ok}/{len(SEED_TICKETS)} matched expected decisions.")
     return 0
