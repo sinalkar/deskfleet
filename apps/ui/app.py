@@ -13,7 +13,7 @@ import requests
 import streamlit as st
 
 API_URL = os.getenv("API_URL", "http://localhost:8080").rstrip("/")
-REQUEST_TIMEOUT = 60
+REQUEST_TIMEOUT = 300
 
 DECISION_STYLES = {
     "RESOLVED": {"color": "#1a7f37", "emoji": "✅", "label": "Resolved"},

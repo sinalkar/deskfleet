@@ -110,7 +110,14 @@ class ChatLLMClient:
         class Classification(BaseModel):
             category: str = Field(description="one of: order, product, refund, other")
 
-        model = self._chat.with_structured_output(Classification)
+        # Local servers (like LM Studio on localhost) don't support tool_choice as an object,
+        # so they require method="json_schema". Cloud/other providers require function_calling (default).
+        provider = settings.llm_provider.lower()
+        base_url = settings.llm_base_url or ""
+        is_local_server = provider == "openai" and ("localhost" in base_url or "127.0.0.1" in base_url)
+        method = "json_schema" if is_local_server else "function_calling"
+
+        model = self._chat.with_structured_output(Classification, method=method)
         result: Any = model.invoke(
             [
                 (
@@ -177,7 +184,13 @@ class ChatLLMClient:
             approved: bool = Field(description="True if the reply is grounded and policy-ok")
             feedback: str = Field(default="", description="What to fix if not approved")
 
-        model = self._chat.with_structured_output(Verdict)
+        # Local servers (like LM Studio on localhost) require json_schema, others function_calling
+        provider = settings.llm_provider.lower()
+        base_url = settings.llm_base_url or ""
+        is_local_server = provider == "openai" and ("localhost" in base_url or "127.0.0.1" in base_url)
+        method = "json_schema" if is_local_server else "function_calling"
+
+        model = self._chat.with_structured_output(Verdict, method=method)
         result: Any = model.invoke(
             [
                 (
