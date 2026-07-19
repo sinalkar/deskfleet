@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/sinalkar/deskfleet/compare/v0.2.0...v0.2.1) (2026-07-19)
+
+
+### Bug Fixes
+
+* use json_schema for local LLM structured output and increase request timeout to 300s ([b908e56](https://github.com/sinalkar/deskfleet/commit/b908e565bfcea9c95929d24b01ee5915f2e9ef1c))
+
 ## [0.2.0](https://github.com/sinalkar/deskfleet/compare/v0.1.0...v0.2.0) (2026-07-18)
 
 
