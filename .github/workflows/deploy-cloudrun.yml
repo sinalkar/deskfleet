@@ -1,0 +1,155 @@
+name: Deploy to Cloud Run
+
+# The spec's deployment spine: pytest -> docker build -> gcloud run deploy.
+#
+# Safe to merge before GCP is configured: the `guard` job checks for the
+# required secrets and short-circuits with a neutral result, so an unconfigured
+# repo shows "skipped" rather than a red X. Add the secrets and it deploys.
+#
+# Required repository secrets:
+#   GCP_PROJECT_ID                  - target GCP project
+#   GCP_WORKLOAD_IDENTITY_PROVIDER  - projects/N/locations/global/workloadIdentityPools/POOL/providers/PROVIDER
+#   GCP_SERVICE_ACCOUNT             - deployer SA email (needs run.admin + iam.serviceAccountUser)
+# Optional repository variables (with defaults):
+#   GCP_REGION (us-central1), CLOUD_RUN_SERVICE (deskfleet-agent),
+#   LLM_PROVIDER (openai), LLM_MODEL (gpt-4o-mini), LANGCHAIN_PROJECT (deskfleet)
+#
+# API keys are read from Secret Manager via --set-secrets, never --set-env-vars,
+# so they never land in the revision config or logs.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Cloud Run service name override"
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-cloudrun-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Check deploy configuration
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          if [ -n "$PROJECT_ID" ] && [ -n "$WIF_PROVIDER" ] && [ -n "$SERVICE_ACCOUNT" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "GCP credentials present - deploy will run."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GCP secrets not configured; skipping Cloud Run deploy."
+          fi
+
+  test:
+    name: Agent-safety tests (deploy gate)
+    needs: guard
+    if: needs.guard.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      # Allowlist enforcement, max-iteration bound, and injection REFUSE all run
+      # here. A regression in any of them blocks the deploy. No secrets needed.
+      - run: pytest tests/ -v
+
+  deploy:
+    name: Build & deploy to Cloud Run
+    needs: [guard, test]
+    if: needs.guard.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # required for Workload Identity Federation
+    env:
+      REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+      SERVICE: ${{ inputs.service || vars.CLOUD_RUN_SERVICE || 'deskfleet-agent' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      # Local build parity check before handing the source to Cloud Build.
+      - name: Docker build (smoke)
+        run: docker build -t deskfleet-api apps/api
+
+      - name: Deploy
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --source apps/api \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 1Gi \
+            --cpu 1 \
+            --timeout 300 \
+            --max-instances 10 \
+            --set-env-vars "LLM_PROVIDER=${{ vars.LLM_PROVIDER || 'openai' }},LLM_MODEL=${{ vars.LLM_MODEL || 'gpt-4o-mini' }},LANGCHAIN_TRACING_V2=true,LANGCHAIN_PROJECT=${{ vars.LANGCHAIN_PROJECT || 'deskfleet' }},SQLITE_PATH=/tmp/deskfleet.db,LOG_LEVEL=INFO" \
+            --set-secrets "OPENAI_API_KEY=openai-api-key:latest,LANGCHAIN_API_KEY=langchain-api-key:latest" \
+            --quiet
+
+      - name: Resolve service URL
+        id: url
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Service URL: $URL"
+
+      # Post-deploy verification: a green deploy that returns 503 is not a
+      # success. Retries cover cold-start on the first request.
+      - name: Smoke test /health
+        run: |
+          URL="${{ steps.url.outputs.url }}"
+          for i in 1 2 3 4 5; do
+            CODE=$(curl -s -o /tmp/health.json -w '%{http_code}' "$URL/health" || echo 000)
+            if [ "$CODE" = "200" ]; then
+              echo "health ok: $(cat /tmp/health.json)"
+              exit 0
+            fi
+            echo "attempt $i: HTTP $CODE - retrying in 10s"
+            sleep 10
+          done
+          echo "::error::/health did not return 200 after 5 attempts"
+          exit 1
+
+      - name: Summary
+        run: |
+          {
+            echo "### Cloud Run deploy"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Service | \`$SERVICE\` |"
+            echo "| Region | \`$REGION\` |"
+            echo "| URL | ${{ steps.url.outputs.url }} |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

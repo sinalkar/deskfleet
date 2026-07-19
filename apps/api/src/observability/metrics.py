@@ -37,6 +37,17 @@ TOOL_CALLS_TOTAL = Counter(
     ["tool", "status"],
 )
 
+LLM_CALLS_TOTAL = Counter(
+    "deskfleet_llm_calls_total",
+    "Total LLM invocations made across all graph nodes.",
+)
+
+TOKEN_SOURCE_TOTAL = Counter(
+    "deskfleet_token_source_total",
+    "How token counts were obtained, for cost-accuracy monitoring.",
+    ["source"],  # provider | estimated
+)
+
 
 def record_decision(decision: str) -> None:
     TICKETS_TOTAL.labels(decision=decision).inc()
@@ -60,6 +71,16 @@ def record_cost(usd: float) -> None:
 
 def record_tool_call(tool: str, status: str) -> None:
     TOOL_CALLS_TOTAL.labels(tool=tool, status=status).inc()
+
+
+def record_llm_calls(count: int) -> None:
+    if count:
+        LLM_CALLS_TOTAL.inc(count)
+
+
+def record_token_source(source: str) -> None:
+    """``source`` is ``"provider"`` (real usage) or ``"estimated"`` (fallback)."""
+    TOKEN_SOURCE_TOTAL.labels(source=source).inc()
 
 
 def metrics_payload() -> tuple[bytes, str]:

@@ -26,18 +26,14 @@ from src.guardrails.injection import detect_injection
 from src.guardrails.pii import redact_pii
 from src.observability import metrics
 from src.observability.costing import Usage, count_tokens, estimate_cost
+from src.observability.tracing import ROOT_RUN_NAME, trace_run
+from src.observability.usage import UsageCollector
 from src.schemas import ResolveRequest, ResolveResponse, ToolCallRecord
 from src.storage import repo
 
 
 def _new_ticket_id() -> str:
     return f"tkt_{uuid.uuid4().hex[:12]}"
-
-
-def _trace_url(run_id: str | None) -> str | None:
-    if not settings.langchain_tracing_v2 or not run_id:
-        return None
-    return f"https://smith.langchain.com/o/-/projects/p/{settings.langchain_project}/r/{run_id}"
 
 
 def _persist(state: dict[str, Any], ticket_id: str, latency_ms: float, cost_usd: float) -> None:
@@ -114,16 +110,26 @@ def resolve_ticket(graph: Any, request: ResolveRequest) -> ResolveResponse:
         "iterations": 0,
         "tool_calls": [],
     }
-    config = {"configurable": {"thread_id": ticket_id}}
-    run_id = None
-    try:
-        final: dict[str, Any] = graph.invoke(initial, config=config)
-    except Exception as exc:  # noqa: BLE001 - degrade to ESCALATE, never 500 the graph
-        final = {
-            **initial,
-            "decision": Decision.ESCALATE.value,
-            "escalation_reason": f"Graph execution error: {exc}",
-        }
+    # One collector per request; LangGraph propagates callbacks to every nested
+    # LLM call, so this sees real provider token counts from all four nodes.
+    collector = UsageCollector()
+    config = {
+        "configurable": {"thread_id": ticket_id},
+        "callbacks": [collector],
+        "run_name": ROOT_RUN_NAME,
+        "metadata": {"ticket_id": ticket_id, "category_hint": request.order_id or ""},
+        "tags": ["deskfleet", f"provider:{settings.llm_provider}"],
+    }
+
+    with trace_run() as trace:
+        try:
+            final: dict[str, Any] = graph.invoke(initial, config=config)
+        except Exception as exc:  # noqa: BLE001 - degrade to ESCALATE, never 500 the graph
+            final = {
+                **initial,
+                "decision": Decision.ESCALATE.value,
+                "escalation_reason": f"Graph execution error: {exc}",
+            }
 
     # (2 outbound): redact reply again before returning/persisting.
     reply = redact_pii(final.get("draft")) if final.get("draft") else None
@@ -134,9 +140,25 @@ def resolve_ticket(graph: Any, request: ResolveRequest) -> ResolveResponse:
 
     latency_ms = (time.perf_counter() - started) * 1000
 
-    # (5): cost accounting — estimate tokens over redacted ticket + reply.
-    prompt_tokens = count_tokens(redacted_ticket, settings.llm_model)
-    completion_tokens = count_tokens(reply or "", settings.llm_model)
+    # (5): cost accounting.
+    #
+    # Preferred source is the provider's own token counts, accumulated across
+    # every LLM call the graph made (classify + research + one draft/review pair
+    # per review iteration). Estimating from just the ticket and the final reply
+    # — as this used to — ignores system prompts, tool schemas, accumulated
+    # facts, and retries, and under-reports spend by a large multiple.
+    #
+    # The fallback keeps behavior identical for providers that omit usage and
+    # for the injected test fakes, which make no real calls.
+    if collector.has_usage:
+        prompt_tokens = collector.prompt_tokens
+        completion_tokens = collector.completion_tokens
+        metrics.record_token_source("provider")
+    else:
+        prompt_tokens = count_tokens(redacted_ticket, settings.llm_model)
+        completion_tokens = count_tokens(reply or "", settings.llm_model)
+        metrics.record_token_source("estimated")
+
     cost_usd = estimate_cost(
         prompt_tokens, completion_tokens, settings.llm_model, settings.llm_provider
     )
@@ -150,6 +172,7 @@ def resolve_ticket(graph: Any, request: ResolveRequest) -> ResolveResponse:
     metrics.record_latency(latency_ms / 1000)
     metrics.record_tokens(usage.prompt_tokens, usage.completion_tokens)
     metrics.record_cost(cost_usd)
+    metrics.record_llm_calls(collector.llm_calls)
 
     tool_records = [
         ToolCallRecord(
@@ -169,7 +192,7 @@ def resolve_ticket(graph: Any, request: ResolveRequest) -> ResolveResponse:
         escalation_reason=final.get("escalation_reason"),
         iterations=final.get("iterations", 0),
         tool_calls=tool_records,
-        langsmith_trace_url=_trace_url(run_id),
+        langsmith_trace_url=trace.url,
         latency_ms=round(latency_ms, 2),
         cost_usd=cost_usd,
     )

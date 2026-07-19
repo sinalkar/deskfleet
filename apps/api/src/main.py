@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 
 from src.config import settings
 from src.observability import metrics
+from src.observability.tracing import configure_tracing, tracing_enabled
 from src.schemas import (
     HealthResponse,
     ResolveRequest,
@@ -28,7 +29,14 @@ logger = logging.getLogger("deskfleet")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    logger.info("DeskFleet API started (llm_configured=%s)", settings.has_llm_credentials)
+    # Must run before any graph/LLM construction: the LangChain SDK reads tracing
+    # config from os.environ at client-build time, not from our settings object.
+    traced = configure_tracing()
+    logger.info(
+        "DeskFleet API started (llm_configured=%s, tracing=%s)",
+        settings.has_llm_credentials,
+        traced,
+    )
     yield
 
 
@@ -66,7 +74,11 @@ def create_app() -> FastAPI:
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
-        return HealthResponse(status="ok", llm_configured=settings.has_llm_credentials)
+        return HealthResponse(
+            status="ok",
+            llm_configured=settings.has_llm_credentials,
+            tracing_enabled=tracing_enabled(),
+        )
 
     @app.get("/metrics")
     def prometheus_metrics() -> Response:

@@ -18,10 +18,15 @@ from src.graph.nodes import (
     make_reviewer,
 )
 from src.graph.state import TicketState
+from src.observability.tracing import configure_tracing
 
 
 def compile_graph(llm: LLMClient | None = None):
     """Build and compile the classifier→researcher→responder→reviewer graph."""
+    # Idempotent, and a no-op when tracing is off. Repeated here so graphs built
+    # outside the FastAPI lifespan (scripts, notebooks, tests) are traced too.
+    configure_tracing()
+
     client = llm or build_llm_client()
 
     graph = StateGraph(TicketState)

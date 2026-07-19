@@ -152,3 +152,30 @@ def test_costing_unknown_model_falls_back_to_provider_wildcard():
     # unknown gemini model -> gemini "*" row, not the openai default
     cost = estimate_cost(1000, 1000, "gemini-9.9-ultra", "gemini")
     assert cost == pytest.approx(0.00050)
+
+
+# ── structured-output strategy ───────────────────────────────────────────────
+# Extracted from a block duplicated across classify() and review(); these pin
+# the behavior so the two call sites cannot drift apart again.
+
+
+@pytest.mark.parametrize(
+    "provider,base_url,expected",
+    [
+        ("openai", "http://localhost:1234/v1", "json_schema"),
+        ("openai", "http://127.0.0.1:1234/v1", "json_schema"),
+        ("openai", "", "function_calling"),
+        ("openai", "https://api.openai.com/v1", "function_calling"),
+        ("groq", "", "function_calling"),
+        # A remote provider is never treated as local, even via an odd base_url.
+        ("groq", "http://localhost:1234/v1", "function_calling"),
+    ],
+)
+def test_structured_output_method(monkeypatch, provider, base_url, expected):
+    from src.config import settings
+    from src.graph.llm import _structured_output_method
+
+    monkeypatch.setattr(settings, "llm_provider", provider)
+    monkeypatch.setattr(settings, "llm_base_url", base_url)
+
+    assert _structured_output_method() == expected
