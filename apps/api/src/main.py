@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 
 from src.config import settings
 from src.observability import metrics
@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
 
 
 def get_graph(request: Request) -> Any:
-    """Lazily compile the production graph, caching it on ``app.state``.
+    """Compile the production graph, caching it on ``app.state``.
 
     Tests override ``app.state.graph`` with a fake-LLM-backed graph, so this is
     never called with real credentials in CI.
@@ -53,6 +53,25 @@ def get_graph(request: Request) -> Any:
         graph = compile_graph()
         request.app.state.graph = graph
     return graph
+
+
+class _LazyGraph:
+    """Defers real graph compilation until ``.invoke()`` is actually called.
+
+    Building the graph requires a configured LLM provider and raises if one
+    isn't set up. ``resolve_ticket`` short-circuits injected tickets to REFUSE
+    *before* it ever calls ``graph.invoke()`` — as a route-level dependency,
+    ``get_graph`` would compile (and fail) before that guardrail runs at all,
+    500ing on injection tickets even with no API key configured. Wrapping the
+    graph lazily means compilation only happens once a ticket actually needs
+    the LLM.
+    """
+
+    def __init__(self, request: Request) -> None:
+        self._request = request
+
+    def invoke(self, *args: Any, **kwargs: Any) -> Any:
+        return get_graph(self._request).invoke(*args, **kwargs)
 
 
 def create_app() -> FastAPI:
@@ -86,7 +105,8 @@ def create_app() -> FastAPI:
         return Response(content=body, media_type=content_type)
 
     @app.post("/resolve", response_model=ResolveResponse)
-    def resolve(req: ResolveRequest, graph: Any = Depends(get_graph)) -> ResolveResponse:
+    def resolve(req: ResolveRequest, request: Request) -> ResolveResponse:
+        graph = request.app.state.graph or _LazyGraph(request)
         try:
             return resolve_ticket(graph, req)
         except Exception as exc:  # noqa: BLE001
