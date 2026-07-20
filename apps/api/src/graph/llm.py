@@ -11,6 +11,7 @@ logic run deterministically with **zero API keys**.
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 from src.config import settings
 from src.constants import Category
@@ -96,6 +97,19 @@ def build_chat_model() -> Any:
     )
 
 
+def _structured_output_method() -> str:
+    """Pick the ``with_structured_output`` strategy for the active provider.
+
+    Local OpenAI-compatible servers (LM Studio, llama.cpp) don't accept
+    ``tool_choice`` as an object, so they need ``json_schema``. Cloud providers
+    use the default ``function_calling``.
+    """
+    provider = settings.llm_provider.lower()
+    hostname = urlparse(settings.llm_base_url or "").hostname or ""
+    is_local = provider == "openai" and hostname in {"localhost", "127.0.0.1"}
+    return "json_schema" if is_local else "function_calling"
+
+
 class ChatLLMClient:
     """Backed by any supported LangChain chat model (provider set via .env)."""
 
@@ -110,14 +124,9 @@ class ChatLLMClient:
         class Classification(BaseModel):
             category: str = Field(description="one of: order, product, refund, other")
 
-        # Local servers (like LM Studio on localhost) don't support tool_choice as an object,
-        # so they require method="json_schema". Cloud/other providers require function_calling (default).
-        provider = settings.llm_provider.lower()
-        base_url = settings.llm_base_url or ""
-        is_local_server = provider == "openai" and ("localhost" in base_url or "127.0.0.1" in base_url)
-        method = "json_schema" if is_local_server else "function_calling"
-
-        model = self._chat.with_structured_output(Classification, method=method)
+        model = self._chat.with_structured_output(
+            Classification, method=_structured_output_method()
+        )
         result: Any = model.invoke(
             [
                 (
@@ -184,13 +193,7 @@ class ChatLLMClient:
             approved: bool = Field(description="True if the reply is grounded and policy-ok")
             feedback: str = Field(default="", description="What to fix if not approved")
 
-        # Local servers (like LM Studio on localhost) require json_schema, others function_calling
-        provider = settings.llm_provider.lower()
-        base_url = settings.llm_base_url or ""
-        is_local_server = provider == "openai" and ("localhost" in base_url or "127.0.0.1" in base_url)
-        method = "json_schema" if is_local_server else "function_calling"
-
-        model = self._chat.with_structured_output(Verdict, method=method)
+        model = self._chat.with_structured_output(Verdict, method=_structured_output_method())
         result: Any = model.invoke(
             [
                 (

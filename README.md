@@ -213,7 +213,7 @@ deskfleet/
 │   │       ├── tools/          🛒 registry.py (allowlist) · fakestore.py
 │   │       ├── guardrails/     🛡️ injection.py · pii.py
 │   │       ├── storage/        🗄️ db.py · repo.py (SQLite)
-│   │       ├── observability/  📊 metrics.py (Prometheus) · costing.py (tiktoken)
+│   │       ├── observability/  📊 metrics.py · costing.py · usage.py · tracing.py
 │   │       ├── schemas.py      📋 Pydantic request/response models
 │   │       ├── service.py      🔁 orchestration: guardrails → graph → persist → metrics
 │   │       └── main.py         🌐 FastAPI app factory + routes
@@ -223,6 +223,7 @@ deskfleet/
 ├── tests/               ✅ deterministic safety + contract suite — no API keys needed
 ├── scripts/             🌱 seed_tickets.py · smoke_test.sh
 └── .github/workflows/   ⚙️ ci · security · publish-image · release-please · release-image
+                            · deploy-cloudrun
 ```
 
 ---
@@ -282,7 +283,9 @@ notable ones:
 | `MAX_REVIEW_ITERATIONS` | `2` | review-loop bound (enforced in code, see above) |
 | `MAX_TOOL_ROUNDS` | `3` | researcher tool-call cap per ticket |
 | `SQLITE_PATH` | `./deskfleet.db` | audit database path |
-| `LANGCHAIN_TRACING_V2` | `false` | enable LangSmith tracing — env-only, zero code changes |
+| `LANGCHAIN_TRACING_V2` | `false` | enable LangSmith tracing (also needs a real `LANGCHAIN_API_KEY`) |
+| `LANGCHAIN_API_KEY` | — | LangSmith credential; the `lsv2_...` placeholder counts as unset |
+| `LANGCHAIN_PROJECT` | `deskfleet` | LangSmith project the traces land in |
 
 ---
 
@@ -350,12 +353,39 @@ make lint         # ruff check .
 
 - **Prometheus** — `deskfleet_tickets_total{decision}`,
   `deskfleet_ticket_latency_seconds` (histogram), `deskfleet_tokens_total`,
-  `deskfleet_cost_usd_total`, tool-call counters.
+  `deskfleet_cost_usd_total`, `deskfleet_llm_calls_total`,
+  `deskfleet_token_source_total{source}`, tool-call counters.
 - **Grafana** — provisioned **DeskFleet Overview** dashboard: throughput, P50/P99
   latency, decision breakdown, cumulative spend, escalation rate.
-- **LangSmith** — every node, tool call, and retry traced automatically once
-  `LANGCHAIN_TRACING_V2=true`; the trace URL is returned directly in the
-  `/resolve` response.
+- **LangSmith** — every node, tool call, and retry is traced, and the root run's
+  URL is returned in the `/resolve` response as `langsmith_trace_url`.
+
+### Token accounting
+
+Cost is computed from the **provider's own reported token counts**, accumulated
+across *every* LLM call the graph makes — classify, research, and one
+draft/review pair per review iteration. A `UsageCollector` callback is passed in
+the graph config and LangGraph propagates it to each nested call, so structured
+-output calls (whose return value hides token counts) are captured too.
+
+When a provider reports no usage, the service falls back to a tiktoken estimate
+over the ticket and reply. `deskfleet_token_source_total{source="estimated"}`
+tracks how often that happens — the fallback is far less accurate, since it
+cannot see system prompts, tool schemas, accumulated facts, or retries.
+
+### Enabling tracing
+
+```bash
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=lsv2_...      # a real key; the `lsv2_...` placeholder is ignored
+LANGCHAIN_PROJECT=deskfleet
+```
+
+`configure_tracing()` runs at startup and exports these into `os.environ`, which
+is where the LangChain SDK reads them from — setting them only in `.env` reaches
+the `settings` object but **not** the SDK. Real environment variables (Cloud Run
+secrets, Compose) always win over `.env`. Confirm with `GET /health`, which
+reports `tracing_enabled`.
 
 ---
 
@@ -368,6 +398,7 @@ flowchart LR
     CI --> MAIN{"branch == main?"}
     MAIN -- yes --> PUB["📦 publish-image.yml\npytest gate → SHA image → ghcr.io"]
     MAIN -- yes --> RP["🏷️ release-please.yml\nmaintains the release PR + CHANGELOG"]
+    MAIN -- yes --> DEP["🚀 deploy-cloudrun.yml\npytest gate → gcloud run deploy → /health"]
     RP -- "release PR merged" --> REL["🚀 GitHub Release tagged"]
     REL --> RI["📦 release-image.yml\nsemver + latest tags → ghcr.io"]
 
@@ -375,6 +406,7 @@ flowchart LR
     style SEC fill:#9a6700,color:#fff
     style PUB fill:#2496ED,color:#fff
     style RI fill:#2496ED,color:#fff
+    style DEP fill:#4285F4,color:#fff
 ```
 
 | Workflow | Trigger | Purpose |
@@ -384,14 +416,48 @@ flowchart LR
 | **`publish-image.yml`** | push to `main` | re-run tests → publish immutable per-commit SHA image to `ghcr.io` |
 | **`release-please.yml`** | push to `main` | maintains the release PR, `CHANGELOG.md`, version tag, GitHub Release |
 | **`release-image.yml`** | GitHub Release *published* | build & push the API image to GHCR with semver + `latest` tags |
+| **`deploy-cloudrun.yml`** | push to `main` + manual | pytest gate → `gcloud run deploy` → `/health` smoke test (skips if GCP secrets are absent) |
 
-The only secret these workflows use is `GITHUB_TOKEN`, provided automatically by
-GitHub — no additional repository secrets are required for CI/CD to pass.
+Apart from the optional GCP deploy secrets below, the only secret these workflows
+use is `GITHUB_TOKEN`, provided automatically by GitHub — no additional
+repository secrets are required for CI/CD to pass.
 
-**Runtime deployment is deliberately out of scope for the automated workflows.**
-The immutable SHA image published to `ghcr.io` is the deployable artifact; roll it
-out with whatever mechanism your environment uses (Cloud Run, ECS, Kubernetes, a
-plain VM, …).
+### 🚀 Cloud Run deployment
+
+`deploy-cloudrun.yml` completes the spec's deployment spine —
+**pytest → docker build → `gcloud run deploy`**:
+
+| Step | Detail |
+|---|---|
+| **Gate** | The agent-safety suite (allowlist, max-iteration, injection REFUSE) must pass |
+| **Auth** | Workload Identity Federation — no long-lived service-account JSON in the repo |
+| **Build** | `gcloud run deploy --source apps/api`; Cloud Build reads `apps/api/Dockerfile` |
+| **Secrets** | `--set-secrets` from Secret Manager — never `--set-env-vars`, which would land keys in the revision config and logs |
+| **Verify** | Polls `<URL>/health` with retries; a deploy that returns 503 fails the job |
+
+The workflow **skips cleanly when GCP is not configured**, so the repo stays green
+before you wire up a project. To enable it, add:
+
+```bash
+# Secret Manager (once per project)
+echo -n "$OPENAI_API_KEY"    | gcloud secrets create openai-api-key --data-file=-
+echo -n "$LANGCHAIN_API_KEY" | gcloud secrets create langchain-api-key --data-file=-
+
+# Let the Cloud Run runtime SA read them, or the revision fails to start
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$RUNTIME_SA" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+then set repository **secrets** `GCP_PROJECT_ID`,
+`GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` (and optionally the
+**variables** `GCP_REGION`, `CLOUD_RUN_SERVICE`, `LLM_PROVIDER`, `LLM_MODEL`).
+
+The container binds `0.0.0.0:$PORT` as Cloud Run requires — the single most
+common cause of a green deploy that serves 503s.
+
+The immutable SHA image published to `ghcr.io` remains the portable artifact if
+you'd rather roll out to ECS, Kubernetes, or a plain VM instead.
 
 Releases follow [Conventional Commits](https://www.conventionalcommits.org/):
 `feat:` → minor bump, `fix:` → patch bump, `feat!:`/`BREAKING CHANGE` → major bump,

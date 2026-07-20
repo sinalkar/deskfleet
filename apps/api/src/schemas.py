@@ -55,3 +55,4 @@ class TicketSummary(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     llm_configured: bool = False
+    tracing_enabled: bool = False

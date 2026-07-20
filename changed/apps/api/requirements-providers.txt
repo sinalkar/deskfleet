@@ -1,4 +1,0 @@
-# Optional provider SDKs — install only what you use.
-# Groq, NVIDIA NIM, and Ollama need NOTHING extra (they ride on langchain-openai).
-langchain-anthropic==0.3.*      # LLM_PROVIDER=anthropic (Claude)
-langchain-google-genai==2.*     # LLM_PROVIDER=gemini
