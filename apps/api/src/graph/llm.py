@@ -11,6 +11,7 @@ logic run deterministically with **zero API keys**.
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 from src.config import settings
 from src.constants import Category
@@ -104,8 +105,8 @@ def _structured_output_method() -> str:
     use the default ``function_calling``.
     """
     provider = settings.llm_provider.lower()
-    base_url = settings.llm_base_url or ""
-    is_local = provider == "openai" and ("localhost" in base_url or "127.0.0.1" in base_url)
+    hostname = urlparse(settings.llm_base_url or "").hostname or ""
+    is_local = provider == "openai" and hostname in {"localhost", "127.0.0.1"}
     return "json_schema" if is_local else "function_calling"
 
 
