@@ -17,9 +17,15 @@ _REDACTED = "[REDACTED]"
 # written inline ("order 1234567890") otherwise matches the phone pattern, and
 # redacting it destroys the very fact the researcher needs to do a lookup.
 # These spans are masked out before redaction and restored afterwards.
+#
+# The connector between the keyword and the digits is a single bounded
+# repetition of one alternation group, not several adjacent `\s*`/optional
+# pieces — that shape is what CodeQL flags as a polynomial-time regex, since
+# a run of whitespace with no trailing digits could otherwise be split across
+# the separate quantifiers in exponentially many ways before failing.
 _PROTECTED_REF = re.compile(
     r"\b(order|invoice|tracking|ticket|reference|ref|awb)\b"
-    r"\s*(?:id|no\.?|number|#)?\s*[:#]?\s*\d{3,}\b",
+    r"(?:[\s:#]|id|no\.?|number){0,20}\d{3,}\b",
     re.I,
 )
 
