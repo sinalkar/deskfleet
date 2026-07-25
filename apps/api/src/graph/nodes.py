@@ -8,6 +8,7 @@ transformers: they read from and return partial ``TicketState`` updates.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from src.config import settings
 from src.constants import Category, Decision, ToolStatus
@@ -18,7 +19,7 @@ from src.guardrails.pii import redact_pii
 from src.tools.registry import dispatch_tool
 
 
-def make_classifier(llm: LLMClient) -> Callable[[TicketState], dict]:
+def make_classifier(llm: LLMClient) -> Callable[[TicketState], dict[str, Any]]:
     def classifier(state: TicketState) -> dict:
         category = llm.classify(state["ticket"])
         if category not in {c.value for c in Category}:
@@ -28,7 +29,7 @@ def make_classifier(llm: LLMClient) -> Callable[[TicketState], dict]:
     return classifier
 
 
-def make_researcher(llm: LLMClient) -> Callable[[TicketState], dict]:
+def make_researcher(llm: LLMClient) -> Callable[[TicketState], dict[str, Any]]:
     """Tool-calling loop, allowlisted tools only, bounded by MAX_TOOL_ROUNDS.
 
     The allowlist is enforced by :func:`dispatch_tool`; a model request for an
@@ -66,7 +67,7 @@ def make_researcher(llm: LLMClient) -> Callable[[TicketState], dict]:
     return researcher
 
 
-def make_responder(llm: LLMClient) -> Callable[[TicketState], dict]:
+def make_responder(llm: LLMClient) -> Callable[[TicketState], dict[str, Any]]:
     def responder(state: TicketState) -> dict:
         draft = llm.draft(
             ticket=state["ticket"],
@@ -81,7 +82,7 @@ def make_responder(llm: LLMClient) -> Callable[[TicketState], dict]:
     return responder
 
 
-def make_reviewer(llm: LLMClient) -> Callable[[TicketState], dict]:
+def make_reviewer(llm: LLMClient) -> Callable[[TicketState], dict[str, Any]]:
     """Grade the draft and set the terminal decision or request a revision.
 
     The max-iteration guard lives in the routing layer (edges.py); the reviewer
