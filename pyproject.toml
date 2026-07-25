@@ -17,3 +17,25 @@ ignore = [
 testpaths = ["tests"]
 pythonpath = ["apps/api", "."]
 addopts = "-ra"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["apps/api/src"]
+mypy_path = "apps/api"
+# Pragmatic strictness: catch real type errors in our code without demanding
+# stubs for the LangChain/LangGraph ecosystem (which ships incomplete typing).
+ignore_missing_imports = true
+no_strict_optional = true
+# Some `type: ignore`s guard optional-dependency fallbacks (usage.py) — they
+# are "unused" only when the optional package happens to be installed.
+warn_unused_ignores = false
+warn_redundant_casts = true
+check_untyped_defs = true
+
+[tool.coverage.run]
+source = ["apps/api/src"]
+omit = ["*/observability/tracing.py"]  # LangSmith SDK paths need live credentials
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

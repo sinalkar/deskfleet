@@ -54,7 +54,8 @@ class Settings(BaseSettings):
     sqlite_path: str = "./deskfleet.db"
 
     # ── Service ──
-    api_host: str = "0.0.0.0"
+    # Cloud Run requires binding all interfaces.
+    api_host: str = "0.0.0.0"  # nosec B104
     api_port: int = 8080
     log_level: str = "INFO"
 

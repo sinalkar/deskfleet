@@ -1,0 +1,11 @@
+# Keep secrets, VCS data, caches, and dev cruft out of the image build context.
+.env
+.env.*
+*.db
+.git
+__pycache__/
+*.py[cod]
+*.ipynb
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

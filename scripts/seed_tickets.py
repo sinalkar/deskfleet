@@ -59,7 +59,8 @@ def _post(payload: dict) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=90) as resp:
+    # Local dev script: API_URL points at your own DeskFleet instance.
+    with urllib.request.urlopen(req, timeout=90) as resp:  # nosec B310
         return json.loads(resp.read())
 
 
