@@ -2,4 +2,6 @@
 -r apps/api/requirements.txt
 pytest==8.*
 pytest-mock==3.*
+pytest-cov==7.*
 ruff==0.6.*
+mypy==2.*

@@ -1,0 +1,5 @@
+# Historical fingerprint: a deliberately fake credential used as a test payload
+# for the outbound prompt-leak guardrail (tests/test_hijack_hardening.py). The
+# string was replaced with a low-entropy placeholder in a later commit, but the
+# original remains in git history; this pins that one finding as a false positive.
+eef0a7f5e7b0f5600ed8465aff4e686b57dfde4e:tests/test_hijack_hardening.py:generic-api-key:136

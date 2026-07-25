@@ -8,16 +8,18 @@ transformers: they read from and return partial ``TicketState`` updates.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from src.config import settings
-from src.constants import Category, Decision
+from src.constants import Category, Decision, ToolStatus
 from src.graph.llm import LLMClient
 from src.graph.state import TicketState
+from src.guardrails.injection import scan_tool_result
 from src.guardrails.pii import redact_pii
 from src.tools.registry import dispatch_tool
 
 
-def make_classifier(llm: LLMClient) -> Callable[[TicketState], dict]:
+def make_classifier(llm: LLMClient) -> Callable[[TicketState], dict[str, Any]]:
     def classifier(state: TicketState) -> dict:
         category = llm.classify(state["ticket"])
         if category not in {c.value for c in Category}:
@@ -27,7 +29,7 @@ def make_classifier(llm: LLMClient) -> Callable[[TicketState], dict]:
     return classifier
 
 
-def make_researcher(llm: LLMClient) -> Callable[[TicketState], dict]:
+def make_researcher(llm: LLMClient) -> Callable[[TicketState], dict[str, Any]]:
     """Tool-calling loop, allowlisted tools only, bounded by MAX_TOOL_ROUNDS.
 
     The allowlist is enforced by :func:`dispatch_tool`; a model request for an
@@ -50,14 +52,22 @@ def make_researcher(llm: LLMClient) -> Callable[[TicketState], dict]:
             record = dispatch_tool(name, args)
             tool_calls.append(record)
             if record["status"] == "ok":
-                facts.append({"tool": name, "args": args, "data": record["result"]})
+                # Indirect-injection defense: external API responses are
+                # untrusted. Strings carrying injection payloads are quarantined
+                # before they can reach the responder's prompt, and the record
+                # is marked so the audit trail shows what happened.
+                flagged, sanitized = scan_tool_result(record["result"])
+                if flagged:
+                    record["status"] = ToolStatus.SANITIZED.value
+                    record["result"] = sanitized
+                facts.append({"tool": name, "args": args, "data": sanitized})
 
         return {"facts": facts, "tool_calls": tool_calls}
 
     return researcher
 
 
-def make_responder(llm: LLMClient) -> Callable[[TicketState], dict]:
+def make_responder(llm: LLMClient) -> Callable[[TicketState], dict[str, Any]]:
     def responder(state: TicketState) -> dict:
         draft = llm.draft(
             ticket=state["ticket"],
@@ -72,7 +82,7 @@ def make_responder(llm: LLMClient) -> Callable[[TicketState], dict]:
     return responder
 
 
-def make_reviewer(llm: LLMClient) -> Callable[[TicketState], dict]:
+def make_reviewer(llm: LLMClient) -> Callable[[TicketState], dict[str, Any]]:
     """Grade the draft and set the terminal decision or request a revision.
 
     The max-iteration guard lives in the routing layer (edges.py); the reviewer

@@ -109,3 +109,46 @@ jobs:
           exit-code: 1
           ignore-unfixed: true
           severity: HIGH,CRITICAL
+
+  bandit:
+    name: Bandit Python SAST
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # -ll = fail only on MEDIUM+ severity findings; tests are excluded
+      # (asserts and fixed fake credentials are idiomatic there).
+      - name: Run Bandit
+        run: |
+          pip install bandit
+          bandit -r apps/api/src apps/ui packages scripts -ll
+
+  pip-audit:
+    name: Dependency Vulnerability Audit (pip-audit)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # Audit the resolved dependency closure of the API + UI requirements
+      # against the PyPI advisory database. Auditing the requirements files
+      # (not the installed environment) keeps runner-preinstalled packages
+      # like setuptools out of scope. Fails on any known vulnerability.
+      - name: Audit API + UI dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r apps/api/requirements.txt -r apps/ui/requirements.txt

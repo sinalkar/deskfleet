@@ -32,6 +32,7 @@ class ToolStatus(str, Enum):
     OK = "ok"
     ERROR = "error"
     BLOCKED = "blocked"
+    SANITIZED = "sanitized"  # succeeded, but injection payload quarantined from result
 
 
 DECISIONS = [d.value for d in Decision]

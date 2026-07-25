@@ -1,0 +1,69 @@
+name: Code Quality
+
+# Coding standards and code-quality gates, run on every push and PR:
+#   lint            - ruff check (bug patterns, imports, modern idioms)
+#   format          - ruff format --check (canonical formatting, no drift)
+#   type-check      - mypy over the API source
+#   test-coverage   - pytest with a coverage floor (fails below 80%)
+# All jobs run with zero API keys — the suite injects a fake LLM.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: code-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (ruff check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install "ruff==0.6.*"
+      - run: ruff check . --output-format=github
+
+  format:
+    name: Formatting (ruff format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install "ruff==0.6.*"
+      - run: ruff format --check .
+
+  type-check:
+    name: Type check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -r requirements-dev.txt
+      - run: mypy
+
+  test-coverage:
+    name: Tests + coverage floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest tests/ --cov --cov-report=term --cov-fail-under=80

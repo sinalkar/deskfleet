@@ -22,7 +22,7 @@ from typing import Any
 
 from src.config import settings
 from src.constants import Decision
-from src.guardrails.injection import detect_injection
+from src.guardrails.injection import detect_injection, detect_prompt_leak
 from src.guardrails.pii import redact_pii
 from src.observability import metrics
 from src.observability.costing import Usage, count_tokens, estimate_cost
@@ -136,6 +136,20 @@ def resolve_ticket(graph: Any, request: ResolveRequest) -> ResolveResponse:
     final["draft"] = reply
 
     decision = final.get("decision") or Decision.ESCALATE.value
+
+    # Outbound hijack defense: a draft that narrates its own instructions or
+    # carries smuggled role tags means an injected payload got past the inbound
+    # layers (e.g. via a quarantine miss in tool output). Never send it —
+    # escalate to a human with the reply withheld.
+    is_leak, leak_pattern = detect_prompt_leak(reply)
+    if is_leak and decision == Decision.RESOLVED.value:
+        decision = Decision.ESCALATE.value
+        final["escalation_reason"] = (
+            f"Outbound guardrail: drafted reply matched prompt-leak pattern: {leak_pattern}"
+        )
+        reply = None
+        final["draft"] = None
+
     final["decision"] = decision
 
     latency_ms = (time.perf_counter() - started) * 1000
