@@ -6,9 +6,13 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ResolveRequest(BaseModel):
-    ticket: str = Field(..., min_length=1, description="Raw support ticket text")
+    # max_length bounds prompt-stuffing / flooding attacks (and token spend) at
+    # the API boundary; real support tickets fit comfortably within it.
+    ticket: str = Field(..., min_length=1, max_length=8000, description="Raw support ticket text")
     order_id: str | None = Field(
-        default=None, description="Optional order identifier referenced by the ticket"
+        default=None,
+        max_length=64,
+        description="Optional order identifier referenced by the ticket",
     )
 
     @field_validator("ticket")

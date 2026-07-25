@@ -10,9 +10,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from src.config import settings
-from src.constants import Category, Decision
+from src.constants import Category, Decision, ToolStatus
 from src.graph.llm import LLMClient
 from src.graph.state import TicketState
+from src.guardrails.injection import scan_tool_result
 from src.guardrails.pii import redact_pii
 from src.tools.registry import dispatch_tool
 
@@ -50,7 +51,15 @@ def make_researcher(llm: LLMClient) -> Callable[[TicketState], dict]:
             record = dispatch_tool(name, args)
             tool_calls.append(record)
             if record["status"] == "ok":
-                facts.append({"tool": name, "args": args, "data": record["result"]})
+                # Indirect-injection defense: external API responses are
+                # untrusted. Strings carrying injection payloads are quarantined
+                # before they can reach the responder's prompt, and the record
+                # is marked so the audit trail shows what happened.
+                flagged, sanitized = scan_tool_result(record["result"])
+                if flagged:
+                    record["status"] = ToolStatus.SANITIZED.value
+                    record["result"] = sanitized
+                facts.append({"tool": name, "args": args, "data": sanitized})
 
         return {"facts": facts, "tool_calls": tool_calls}
 
