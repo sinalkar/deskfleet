@@ -11,6 +11,11 @@
 
 **LangGraph + FastAPI + Streamlit · monorepo · Docker Compose · GitHub Actions → GHCR**
 
+> 🎓 **Capstone project by [Sanjay Sinalkar](https://github.com/sinalkar)** — built for the
+> **iHub DivyaSampark @ IIT Roorkee × Masai** program (Multi-Agent Systems track, project C·04).
+> A LangGraph crew resolves real support tickets end-to-end against an external order API,
+> with every tool call, decision, and per-node latency traceable in LangSmith.
+
 DeskFleet is a small, self-contained reference implementation of a **production-shaped
 multi-agent system**: it takes a raw support ticket, runs it through a four-node
 LangGraph `StateGraph`, and returns a fully-audited decision — with prompt-injection
@@ -34,21 +39,45 @@ see exactly what the agents did and why.
 
 ## 📚 Table of contents
 
+- [Screenshots](#-screenshots)
 - [Why this exists](#-why-this-exists)
 - [How a ticket flows through the system](#-how-a-ticket-flows-through-the-system)
 - [The agent graph, node by node](#-the-agent-graph-node-by-node)
 - [Request lifecycle, step by step](#-request-lifecycle-step-by-step)
-- [Design principles that make this safe to run unattended](#-design-principles-that-make-this-safe-to-run-unattended)
+- [Security: prompt-hijack defense in depth](#-security-prompt-hijack-defense-in-depth)
 - [The FakeStore mapping](#-the-fakestore-mapping)
 - [Repository layout](#-repository-layout)
-- [Quick start](#-quick-start)
+- [Project setup](#-project-setup)
 - [Configuration](#-configuration)
 - [Multi-provider LLM support](#-multi-provider-llm-support)
 - [API reference](#-api-reference)
 - [Testing](#-testing)
+- [Coding standards](#-coding-standards)
 - [Observability](#-observability)
 - [CI/CD pipeline](#-cicd-pipeline)
 - [Seed & smoke test](#-seed--smoke-test)
+- [Credits](#-credits)
+
+---
+
+## 📸 Screenshots
+
+**Support console — chat home.** Example tickets covering every terminal decision,
+live API status, and per-session decision stats:
+
+![DeskFleet chat console home](docs/screenshots/chat-console-home.png)
+
+**Prompt injection refused before any LLM call.** The guardrail short-circuits and
+the matched pattern is surfaced as the refusal reason — note `0 ms` latency and
+`$0.000000` cost, because the model was never invoked:
+
+![Injection attempt refused](docs/screenshots/injection-refused.png)
+
+**Multi-turn console flow.** Each message is an independent ticket resolution with
+its own decision pill, metric chips, and audit trail (in demo mode without an LLM
+key, live tickets degrade gracefully to `ESCALATE`):
+
+![Conversation flow](docs/screenshots/conversation-flow.png)
 
 ---
 
@@ -167,24 +196,33 @@ sequenceDiagram
 
 ---
 
-## 🔐 Design principles that make this safe to run unattended
+## 🔐 Security: prompt-hijack defense in depth
 
-- **Injection short-circuits before the model.** `guardrails/injection.py` runs on
-  the raw (already PII-redacted) ticket; a match returns `REFUSE` without ever
-  constructing or invoking the LLM. Tests assert **zero** model calls on an
-  injection ticket.
-- **PII is redacted in three places:** the inbound ticket, the outbound draft, and
-  everything persisted to SQLite. `[REDACTED]` substitution is idempotent.
-- **The allowlist *is* the security boundary.** Only tools registered in
-  `tools/registry.py::ALLOWLIST` can execute; any other model-requested tool name is
-  recorded with `status="blocked"` and dispatched to nothing.
-- **The review loop is bounded in code, not by the model.** `graph/edges.py`
-  enforces `MAX_REVIEW_ITERATIONS`; once exhausted the ticket deterministically
-  becomes `ESCALATE`, carrying the reviewer's last feedback as the reason.
+Every layer below is **plain, deterministic Python** — bounded, testable with zero
+API keys, and impossible for a model to be "talked out of". The layers stack, so a
+payload has to defeat all of them:
+
+| # | Layer | Where | What it stops |
+|---|---|---|---|
+| 1 | **Request-size cap** | `schemas.py` (`max_length=8000`) | Prompt-stuffing / flooding and unbounded token spend, rejected with `422` at the API boundary |
+| 2 | **Unicode normalization** | `guardrails/injection.py::normalize` | Obfuscated payloads — NFKC folds fullwidth forms (`ｉｇｎｏｒｅ`), and zero-width/bidi/invisible characters are stripped, so `i​g​n​o​r​e` can't slip past the patterns |
+| 3 | **Inbound injection scan** | `guardrails/injection.py` | 27 pattern families: system-override, role-hijack, prompt-exfiltration, chat-template/special-token smuggling (`</system>`, `<|im_start|>`), encoded payloads, tool coercion. A match → `REFUSE` **before any LLM call** — tests assert zero model invocations |
+| 4 | **PII redaction (in 3 places)** | `guardrails/pii.py` | Emails/phones/SSNs/cards scrubbed from the inbound ticket, the outbound draft, and everything persisted — while order/invoice/tracking references are preserved for lookups |
+| 5 | **Prompt spotlighting** | `graph/llm.py` | Untrusted ticket text is fenced in `<<<TICKET>>> … <<<END_TICKET>>>` delimiters, and every node's system prompt has standing orders to treat fenced content as DATA, never instructions |
+| 6 | **Tool allowlist** | `tools/registry.py::ALLOWLIST` | Any model-requested tool outside the registry is recorded with `status="blocked"` and dispatched to nothing — the allowlist *is* the security boundary |
+| 7 | **Tool-output quarantine** | `graph/nodes.py` researcher | *Indirect* injection: payloads planted in external API data (e.g. a poisoned product title) are quarantined before they reach the responder's prompt, and the audit trail marks the call `sanitized` |
+| 8 | **Bounded review loop** | `graph/edges.py` | Infinite loops / token burn: `MAX_REVIEW_ITERATIONS` is enforced in routing code — exhaustion deterministically becomes `ESCALATE` |
+| 9 | **Outbound leak gate** | `service.py` + `detect_prompt_leak` | A drafted reply that narrates its instructions, echoes role tags, or contains credential-shaped strings is never sent — the ticket escalates with the reply withheld |
+
+Two structural principles underpin the layers:
+
 - **The LLM is dependency-injected.** Every node depends on the `LLMClient`
-  protocol (`graph/llm.py`). Production wires in a configured chat model; the test
-  suite injects a scripted fake — so **the entire safety test suite runs with zero
-  API keys.**
+  protocol (`graph/llm.py`); the test suite injects a scripted fake, so the entire
+  safety suite runs deterministically with **zero API keys**.
+- **Nothing security-critical is delegated to the model.** Allowlisting, loop
+  bounds, injection short-circuiting, and the leak gate all live in ordinary code
+  paths covered by `tests/test_hijack_hardening.py`, `test_injection.py`,
+  `test_allowlist.py`, `test_max_iterations.py`, and `test_pii.py`.
 
 ---
 
@@ -222,38 +260,91 @@ deskfleet/
 ├── infra/               📈 Prometheus scrape config + provisioned Grafana dashboard
 ├── tests/               ✅ deterministic safety + contract suite — no API keys needed
 ├── scripts/             🌱 seed_tickets.py · smoke_test.sh
-└── .github/workflows/   ⚙️ ci · security · publish-image · release-please · release-image
-                            · deploy-cloudrun
+├── docs/screenshots/    📸 README screenshots
+└── .github/workflows/   ⚙️ ci · code-quality · security · publish-image
+                            · release-please · release-image · deploy-cloudrun
 ```
 
 ---
 
-## ⚡ Quick start
+## 🚀 Project setup
 
-### 1. Local (Python)
+### Prerequisites
+
+| Requirement | Version | Needed for |
+|---|---|---|
+| Python | 3.11+ | API, UI, tests |
+| Docker + Docker Compose | any recent | full-stack run (API + UI + Prometheus + Grafana) |
+| An LLM API key | — | **optional** — live resolution only; the whole test suite and the `REFUSE` path work with no key |
+
+### Step 1 — Clone and install
 
 ```bash
+git clone https://github.com/sinalkar/deskfleet.git
 cd deskfleet
-python -m pip install -r requirements-dev.txt   # api + dev deps
-python -m pip install -r apps/ui/requirements.txt
 
-cp .env.example .env    # optional: add an LLM provider key for the live flow
-
-make api    # FastAPI on http://localhost:8080   (/health, /docs, /metrics)
-make ui     # Streamlit on http://localhost:8501
+python -m venv .venv && source .venv/bin/activate     # recommended
+python -m pip install -r requirements-dev.txt          # API + dev/test deps
+python -m pip install -r apps/ui/requirements.txt      # Streamlit UI deps
 ```
 
-Without a configured LLM key, `/health` reports `llm_configured: false` and the live
-graph will raise on `/resolve` for non-injection tickets (by design — no silent fake
-in production). Injection tickets still `REFUSE` with no key, and **the entire test
-suite passes with no key** via the injected fake LLM.
-
-### 2. Full stack (Docker Compose)
+### Step 2 — Configure environment
 
 ```bash
-cp .env.example .env    # fill in keys
+cp .env.example .env
+```
+
+Open `.env` and (optionally) set an LLM provider key. The minimal live setup is
+two lines:
+
+```dotenv
+LLM_PROVIDER=openai          # or groq / gemini / nvidia / anthropic / ollama
+OPENAI_API_KEY=sk-...        # the selected provider's key
+```
+
+Everything else has safe defaults — see [Configuration](#-configuration).
+
+### Step 3 — Verify the install (no key needed)
+
+```bash
+make test     # 100+ tests, all green with zero API keys
+make lint     # ruff check .
+```
+
+### Step 4 — Run it
+
+**Option A — local Python processes:**
+
+```bash
+make api    # FastAPI on http://localhost:8080   (/health, /docs, /metrics)
+make ui     # Streamlit on http://localhost:8501  (in a second shell)
+```
+
+**Option B — full stack with Docker Compose:**
+
+```bash
 docker compose up --build
 ```
+
+| Service | URL | What you'll see |
+|---|---|---|
+| 🚪 API | http://localhost:8080 | `/docs` (OpenAPI), `/health`, `/metrics` |
+| 🖥️ Streamlit UI | http://localhost:8501 | The chat support console |
+| 📈 Prometheus | http://localhost:9090 | Raw metrics + query explorer |
+| 📊 Grafana (`admin`/`admin`) | http://localhost:3000 | Auto-provisioned **DeskFleet Overview** dashboard |
+
+### Step 5 — Try it
+
+Open the UI and click one of the example ticket chips, or hit the API directly:
+
+```bash
+curl -X POST localhost:8080/resolve -H 'content-type: application/json' \
+  -d '{"ticket":"Where is my order 3?","order_id":"3"}'
+```
+
+Without a configured LLM key, `/health` reports `llm_configured: false`; injection
+tickets still `REFUSE` (the guardrail needs no model) and live tickets degrade
+gracefully to `ESCALATE` with a clear reason — the service never 500s.
 
 | Service | URL | What you'll see |
 |---|---|---|
@@ -342,10 +433,33 @@ make lint         # ruff check .
 | `test_allowlist` | Off-registry tool call is blocked, logged, **never executed** |
 | `test_max_iterations` | Loop ends at `ESCALATE` after exactly `MAX_REVIEW_ITERATIONS` |
 | `test_injection` | Injected ticket ⇒ `REFUSE` with **zero** LLM invocations |
+| `test_hijack_hardening` | Obfuscation (zero-width/fullwidth) detected, poisoned tool output quarantined, leaky drafts escalated with reply withheld, oversized tickets rejected |
 | `test_pii` | Email/phone/SSN/card redacted in the API response **and** in the DB |
 | `test_api` | `/resolve` schema, `422` on empty ticket, `/health` 200, `/metrics` |
 | `test_fakestore` | Tool semantics verified against stubbed HTTP |
 | `test_llm_provider` | Provider routing, missing-key errors, and per-provider costing |
+
+---
+
+## 📏 Coding standards
+
+Standards are enforced both locally and in CI (`code-quality.yml`):
+
+| Gate | Tool | Command |
+|---|---|---|
+| Lint (bug patterns, imports, modern idioms) | ruff | `ruff check .` |
+| Canonical formatting | ruff format | `ruff format --check .` |
+| Static typing | mypy | `mypy` (config in `pyproject.toml`) |
+| Test coverage floor (80%) | pytest-cov | `pytest tests/ --cov --cov-fail-under=80` |
+| Python SAST | Bandit | `bandit -r apps/api/src apps/ui packages scripts -ll` |
+| Dependency vulnerabilities | pip-audit | runs in `security.yml` |
+
+For local enforcement before every commit:
+
+```bash
+pip install pre-commit
+pre-commit install        # hooks: ruff, ruff-format, yaml checks, private-key detection
+```
 
 ---
 
@@ -394,15 +508,17 @@ reports `tracing_enabled`.
 ```mermaid
 flowchart LR
     PUSH["📝 git push / PR"] --> CI["✅ ci.yml\nruff · pytest · docker build ×2"]
-    PUSH --> SEC["🔐 security.yml\nCodeQL · Gitleaks · Trivy · Dep Review"]
+    PUSH --> CQ["📏 code-quality.yml\nlint · format · mypy · coverage ≥80%"]
+    PUSH --> SEC["🔐 security.yml\nCodeQL · Gitleaks · Trivy · Dep Review\nBandit · pip-audit"]
     CI --> MAIN{"branch == main?"}
     MAIN -- yes --> PUB["📦 publish-image.yml\npytest gate → SHA image → ghcr.io"]
     MAIN -- yes --> RP["🏷️ release-please.yml\nmaintains the release PR + CHANGELOG"]
-    MAIN -- yes --> DEP["🚀 deploy-cloudrun.yml\npytest gate → gcloud run deploy → /health"]
+    MAIN -- "opt-in only" --> DEP["🚀 deploy-cloudrun.yml\npytest gate → gcloud run deploy → /health"]
     RP -- "release PR merged" --> REL["🚀 GitHub Release tagged"]
     REL --> RI["📦 release-image.yml\nsemver + latest tags → ghcr.io"]
 
     style CI fill:#1a7f37,color:#fff
+    style CQ fill:#6f42c1,color:#fff
     style SEC fill:#9a6700,color:#fff
     style PUB fill:#2496ED,color:#fff
     style RI fill:#2496ED,color:#fff
@@ -412,19 +528,27 @@ flowchart LR
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | **`ci.yml`** | every push/PR | `ruff check` → `pytest` → `docker build` of both images |
-| **`security.yml`** | PRs + push to `main` | CodeQL, dependency review, Gitleaks, Trivy |
+| **`code-quality.yml`** | every push/PR | coding standards: lint, `ruff format --check`, mypy type check, coverage floor (80%) |
+| **`security.yml`** | PRs + push to `main` | CodeQL, dependency review, Gitleaks, Trivy, **Bandit** (Python SAST), **pip-audit** (dependency CVEs) |
 | **`publish-image.yml`** | push to `main` | re-run tests → publish immutable per-commit SHA image to `ghcr.io` |
 | **`release-please.yml`** | push to `main` | maintains the release PR, `CHANGELOG.md`, version tag, GitHub Release |
 | **`release-image.yml`** | GitHub Release *published* | build & push the API image to GHCR with semver + `latest` tags |
-| **`deploy-cloudrun.yml`** | push to `main` + manual | pytest gate → `gcloud run deploy` → `/health` smoke test (skips if GCP secrets are absent) |
+| **`deploy-cloudrun.yml`** | **opt-in**: manual dispatch, or push to `main` with `DEPLOY_TO_CLOUDRUN=true` | pytest gate → `gcloud run deploy` → `/health` smoke test |
 
 Apart from the optional GCP deploy secrets below, the only secret these workflows
 use is `GITHUB_TOKEN`, provided automatically by GitHub — no additional
 repository secrets are required for CI/CD to pass.
 
-### 🚀 Cloud Run deployment
+### 🚀 Cloud Run deployment (optional, opt-in)
 
-`deploy-cloudrun.yml` completes the spec's deployment spine —
+GCP deployment is **fully optional** — the repo stays green with no GCP account.
+`deploy-cloudrun.yml` runs only when *both* are true: the three GCP secrets are
+configured, **and** deployment was requested (repo variable
+`DEPLOY_TO_CLOUDRUN=true` for auto-deploy on `main`, or a manual
+*Run workflow* dispatch). Otherwise the guard job skips everything with a neutral
+notice.
+
+When enabled, it completes the deployment spine —
 **pytest → docker build → `gcloud run deploy`**:
 
 | Step | Detail |
@@ -435,8 +559,7 @@ repository secrets are required for CI/CD to pass.
 | **Secrets** | `--set-secrets` from Secret Manager — never `--set-env-vars`, which would land keys in the revision config and logs |
 | **Verify** | Polls `<URL>/health` with retries; a deploy that returns 503 fails the job |
 
-The workflow **skips cleanly when GCP is not configured**, so the repo stays green
-before you wire up a project. To enable it, add:
+To enable it, add:
 
 ```bash
 # Secret Manager (once per project)
@@ -450,8 +573,9 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 ```
 
 then set repository **secrets** `GCP_PROJECT_ID`,
-`GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` (and optionally the
-**variables** `GCP_REGION`, `CLOUD_RUN_SERVICE`, `LLM_PROVIDER`, `LLM_MODEL`).
+`GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, set the repository
+**variable** `DEPLOY_TO_CLOUDRUN=true` (or use manual dispatch), and optionally
+the **variables** `GCP_REGION`, `CLOUD_RUN_SERVICE`, `LLM_PROVIDER`, `LLM_MODEL`.
 
 The container binds `0.0.0.0:$PORT` as Cloud Run requires — the single most
 common cause of a green deploy that serves 503s.
@@ -489,3 +613,21 @@ The seed tickets cover the full decision space: an order-status query →
 `RESOLVED`, a refund per policy → `RESOLVED`, a prompt-injection attempt →
 `REFUSE`, an out-of-scope rant → `ESCALATE`, and a product question →
 `RESOLVED`.
+
+---
+
+## 🎓 Credits
+
+**DeskFleet** is the capstone project of **Sanjay Sinalkar**, built for the
+**iHub DivyaSampark @ IIT Roorkee × Masai** program — Multi-Agent Systems track
+(project brief C·04). The brief called for a LangGraph crew
+(Classifier → Researcher → Responder → Reviewer) that resolves real tickets
+end-to-end against an external order API, with bounded tools, injection and PII
+guardrails, full LangSmith traceability, Prometheus/Grafana observability, and a
+CI/CD pipeline gated by agent-safety tests.
+
+Built with: [LangGraph](https://langchain-ai.github.io/langgraph/) ·
+[FastAPI](https://fastapi.tiangolo.com/) · [Streamlit](https://streamlit.io/) ·
+[Prometheus](https://prometheus.io/) · [Grafana](https://grafana.com/) ·
+[LangSmith](https://smith.langchain.com/) ·
+[FakeStoreAPI](https://fakestoreapi.com/) (external order/product data).
