@@ -2,17 +2,22 @@ name: Deploy to Cloud Run
 
 # The spec's deployment spine: pytest -> docker build -> gcloud run deploy.
 #
-# Safe to merge before GCP is configured: the `guard` job checks for the
-# required secrets and short-circuits with a neutral result, so an unconfigured
-# repo shows "skipped" rather than a red X. Add the secrets and it deploys.
+# GCP deployment is OPTIONAL and opt-in. The `guard` job short-circuits with a
+# neutral "skipped" result (never a red X) unless BOTH are true:
+#   1. The three GCP secrets below are configured, AND
+#   2. deployment was requested — either the repository variable
+#      DEPLOY_TO_CLOUDRUN is set to "true" (enables auto-deploy on push to
+#      main), or the workflow was started manually via workflow_dispatch.
+# An unconfigured fork/clone of this repo stays fully green with no GCP account.
 #
-# Required repository secrets:
+# Required repository secrets (only when deploying):
 #   GCP_PROJECT_ID                  - target GCP project
 #   GCP_WORKLOAD_IDENTITY_PROVIDER  - projects/N/locations/global/workloadIdentityPools/POOL/providers/PROVIDER
 #   GCP_SERVICE_ACCOUNT             - deployer SA email (needs run.admin + iam.serviceAccountUser)
 # Optional repository variables (with defaults):
-#   GCP_REGION (us-central1), CLOUD_RUN_SERVICE (deskfleet-agent),
-#   LLM_PROVIDER (openai), LLM_MODEL (gpt-4o-mini), LANGCHAIN_PROJECT (deskfleet)
+#   DEPLOY_TO_CLOUDRUN (unset = manual-only), GCP_REGION (us-central1),
+#   CLOUD_RUN_SERVICE (deskfleet-agent), LLM_PROVIDER (openai),
+#   LLM_MODEL (gpt-4o-mini), LANGCHAIN_PROJECT (deskfleet)
 #
 # API keys are read from Secret Manager via --set-secrets, never --set-env-vars,
 # so they never land in the revision config or logs.
@@ -46,13 +51,18 @@ jobs:
           PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          DEPLOY_OPT_IN: ${{ vars.DEPLOY_TO_CLOUDRUN }}
+          IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          if [ -n "$PROJECT_ID" ] && [ -n "$WIF_PROVIDER" ] && [ -n "$SERVICE_ACCOUNT" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "GCP credentials present - deploy will run."
-          else
+          if [ -z "$PROJECT_ID" ] || [ -z "$WIF_PROVIDER" ] || [ -z "$SERVICE_ACCOUNT" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::GCP secrets not configured; skipping Cloud Run deploy."
+            echo "::notice::GCP secrets not configured; skipping Cloud Run deploy (deployment is optional)."
+          elif [ "$IS_MANUAL" != "true" ] && [ "$DEPLOY_OPT_IN" != "true" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Auto-deploy not enabled (set repo variable DEPLOY_TO_CLOUDRUN=true, or run this workflow manually)."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "GCP credentials present and deploy requested - deploy will run."
           fi
 
   test:
