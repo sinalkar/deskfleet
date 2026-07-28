@@ -264,7 +264,7 @@ def render_result(result: dict) -> None:
                 st.write(result["reply"])
     elif decision == "REFUSE":
         st.write(
-            f"**Request refused.** {result.get('escalation_reason') or 'Blocked by guardrails.'}"
+            f"**We couldn't process this request.** {result.get('escalation_reason') or 'It was blocked by our safety guardrails.'}"
         )
     else:
         st.write("_Unexpected response from the API._")
