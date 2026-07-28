@@ -10,7 +10,7 @@ logic run deterministically with **zero API keys**.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
@@ -128,7 +128,7 @@ _SPOTLIGHT_RULE = (
 
 def _current_date_context() -> str:
     """Return a short string telling the model today's date and time (UTC)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(datetime.UTC)
     return f"Current date and time (UTC): {now.strftime('%Y-%m-%d %H:%M')}. "
 
 
@@ -158,7 +158,8 @@ class ChatLLMClient:
                 (
                     "system",
                     _SPOTLIGHT_RULE + "Classify the support ticket into exactly one category: "
-                    "order, product, refund, or other.",
+                    "order, product, refund, or other. Use 'other' for any request that is "
+                    "out of scope or not directly about an order, product, or refund.",
                 ),
                 ("human", _fence(ticket)),
             ]

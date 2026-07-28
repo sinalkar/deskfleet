@@ -69,6 +69,17 @@ _INJECTION_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\bcall\s+(the\s+)?tool\s+['\"]?\w+['\"]?\s+with\b", re.I),  # tool coercion
 ]
 
+# Signals that a ticket is outside the supported support domain and should be
+# refused before the LLM pipeline runs. Conservative: only obvious, unsupported
+# requests (subscriptions, account deletion, etc.) are caught here; anything
+# ambiguous still falls to the classifier and the 'other' -> REFUSE fallback.
+_OUT_OF_SCOPE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\bcancel\b.*\bsubscription\b|\bsubscription\b.*\bcancel\b", re.I),
+    re.compile(r"\bunsubscribe\b|\bunsubscribe\s+me\b", re.I),
+    re.compile(r"\bdelete\b.*\baccount\b|\bclose\b.*\baccount\b", re.I),
+    re.compile(r"\bbilling\b.*\bdispute\b|\bchargeback\b", re.I),
+]
+
 # Signals that a *drafted reply* is leaking instructions or complying with an
 # injected payload — checked outbound, where the vocabulary differs from the
 # inbound attack patterns (the model narrating its own configuration).
@@ -104,6 +115,22 @@ def detect_injection(text: str) -> tuple[bool, str | None]:
         return False, None
     cleaned = normalize(text)
     for pattern in _INJECTION_PATTERNS:
+        if pattern.search(cleaned):
+            return True, pattern.pattern
+    return False, None
+
+
+def detect_out_of_scope(text: str) -> tuple[bool, str | None]:
+    """Return ``(is_out_of_scope, matched_pattern)`` for inbound ticket text.
+
+    Conservative pre-LLM filter for obvious unsupported requests. Anything not
+    matched here still falls to the classifier, where ``Category.OTHER`` becomes
+    a REFUSE decision.
+    """
+    if not text:
+        return False, None
+    cleaned = normalize(text)
+    for pattern in _OUT_OF_SCOPE_PATTERNS:
         if pattern.search(cleaned):
             return True, pattern.pattern
     return False, None

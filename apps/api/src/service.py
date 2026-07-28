@@ -22,7 +22,11 @@ from typing import Any
 
 from src.config import settings
 from src.constants import Decision
-from src.guardrails.injection import detect_injection, detect_prompt_leak
+from src.guardrails.injection import (
+    detect_injection,
+    detect_out_of_scope,
+    detect_prompt_leak,
+)
 from src.guardrails.pii import redact_pii
 from src.observability import metrics
 from src.observability.costing import Usage, count_tokens, estimate_cost
@@ -64,18 +68,26 @@ def resolve_ticket(graph: Any, request: ResolveRequest) -> ResolveResponse:
     started = time.perf_counter()
     ticket_id = _new_ticket_id()
 
-    # (1) + (2): redact PII inbound, then scan the redacted text for injection.
+    # (1) + (2): redact PII inbound, then scan for prompt-injection and out-of-scope.
     redacted_ticket = redact_pii(request.ticket)
 
     is_inj, matched = detect_injection(redacted_ticket)
-    if is_inj:
+    is_oss, oss_matched = detect_out_of_scope(redacted_ticket)
+    if is_inj or is_oss:
         # Short-circuit BEFORE any model invocation.
         latency_ms = (time.perf_counter() - started) * 1000
-        reason = (
-            "We can't process this request because it appears to contain instructions "
-            "that try to override the agent's behavior (prompt injection). "
-            "Please rephrase your support question and we'll be happy to help."
-        )
+        if is_inj:
+            reason = (
+                "We can't process this request because it appears to contain instructions "
+                "that try to override the agent's behavior (prompt injection). "
+                "Please rephrase your support question and we'll be happy to help."
+            )
+        else:
+            reason = (
+                "We can't process this request because it's out of scope for our "
+                "support agent (we handle orders, products, and refunds only). "
+                "Please contact our billing or account team for this request."
+            )
         state = {
             "ticket": redacted_ticket,
             "category": None,
