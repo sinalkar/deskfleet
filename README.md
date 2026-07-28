@@ -31,36 +31,9 @@ Every ticket that enters the system ends in exactly one terminal decision:
 | `ESCALATE` | ⚠️ | Handed to a human, with a concrete reason (unfixable draft, or the review loop ran out) |
 | `REFUSE` | ⛔ | Prompt injection or an out-of-scope request — refused **before the LLM is ever called** |
 
-The service is traced end-to-end in LangSmith, exports Prometheus metrics, persists a
-full audit trail to SQLite, and ships with a Streamlit support console so a human can
-see exactly what the agents did and why.
-
 ---
 
-## 📚 Table of contents
-
-- [Screenshots](#-screenshots)
-- [Why this exists](#-why-this-exists)
-- [How a ticket flows through the system](#-how-a-ticket-flows-through-the-system)
-- [The agent graph, node by node](#-the-agent-graph-node-by-node)
-- [Request lifecycle, step by step](#-request-lifecycle-step-by-step)
-- [Security: prompt-hijack defense in depth](#-security-prompt-hijack-defense-in-depth)
-- [The FakeStore mapping](#-the-fakestore-mapping)
-- [Repository layout](#-repository-layout)
-- [Project setup](#-project-setup)
-- [Configuration](#-configuration)
-- [Multi-provider LLM support](#-multi-provider-llm-support)
-- [API reference](#-api-reference)
-- [Testing](#-testing)
-- [Coding standards](#-coding-standards)
-- [Observability](#-observability)
-- [CI/CD pipeline](#-cicd-pipeline)
-- [Seed & smoke test](#-seed--smoke-test)
-- [Credits](#-credits)
-
----
-
-## 📸 Screenshots
+## 📸 See it in action
 
 **Support console — chat home.** Example tickets covering every terminal decision,
 live API status, and per-session decision stats:
@@ -81,6 +54,81 @@ key, live tickets degrade gracefully to `ESCALATE`):
 
 ---
 
+## ⚡ Quick start
+
+**Prerequisites:** Python 3.11+, Docker + Compose (for the full stack). An LLM API
+key is **optional** — the whole test suite and the `REFUSE` path work with none.
+
+```bash
+# 1. Clone and install
+git clone https://github.com/sinalkar/deskfleet.git
+cd deskfleet
+python -m venv .venv && source .venv/bin/activate
+python -m pip install -r requirements-dev.txt      # API + dev/test deps
+python -m pip install -r apps/ui/requirements.txt  # Streamlit UI deps
+
+# 2. Configure (optional — everything else defaults safely)
+cp .env.example .env
+# LLM_PROVIDER=openai
+# OPENAI_API_KEY=sk-...
+
+# 3. Verify — 100+ tests, all green with zero API keys
+make test
+make lint
+```
+
+**Run it** — local processes, or the full stack:
+
+```bash
+# Option A — local processes
+make api    # FastAPI  → http://localhost:8080  (/health, /docs, /metrics)
+make ui     # Streamlit → http://localhost:8501  (second shell)
+
+# Option B — Docker Compose (adds Prometheus + Grafana)
+docker compose up --build
+```
+
+| Service | URL | What you'll see |
+|---|---|---|
+| 🚪 API | http://localhost:8080 | `/docs` (OpenAPI), `/health`, `/metrics` |
+| 🖥️ Streamlit UI | http://localhost:8501 | The chat support console |
+| 📈 Prometheus | http://localhost:9090 | Raw metrics + query explorer |
+| 📊 Grafana (`admin`/`admin`) | http://localhost:3000 | Auto-provisioned **DeskFleet Overview** dashboard |
+
+**Try it** — click an example ticket chip in the UI, or hit the API directly:
+
+```bash
+curl -X POST localhost:8080/resolve -H 'content-type: application/json' \
+  -d '{"ticket":"Where is my order 3?","order_id":"3"}'
+```
+
+Without a configured LLM key, `/health` reports `llm_configured: false`; injection
+tickets still `REFUSE` (the guardrail needs no model) and live tickets degrade
+gracefully to `ESCALATE` with a clear reason — the service never 500s.
+
+---
+
+## 📚 Table of contents
+
+- [Why this exists](#-why-this-exists)
+- [How a ticket flows through the system](#-how-a-ticket-flows-through-the-system)
+- [The agent graph, node by node](#-the-agent-graph-node-by-node)
+- [Request lifecycle, step by step](#-request-lifecycle-step-by-step)
+- [Security: prompt-hijack defense in depth](#-security-prompt-hijack-defense-in-depth)
+- [The FakeStore mapping](#-the-fakestore-mapping)
+- [Repository layout](#-repository-layout)
+- [Configuration](#-configuration)
+- [Multi-provider LLM support](#-multi-provider-llm-support)
+- [API reference](#-api-reference)
+- [Testing](#-testing)
+- [Coding standards](#-coding-standards)
+- [Observability](#-observability)
+- [CI/CD pipeline](#-cicd-pipeline)
+- [Seed & smoke test](#-seed--smoke-test)
+- [Credits](#-credits)
+
+---
+
 ## 💡 Why this exists
 
 Customer support triage is a good stress test for agentic systems: it needs
@@ -92,6 +140,10 @@ implements all of that as actual, tested code rather than prompt-only guardrails
 the security-critical decisions (tool allowlisting, loop bounds, injection
 short-circuiting) all live in plain Python, not in something an LLM could be talked
 out of.
+
+The service is traced end-to-end in LangSmith, exports Prometheus metrics, persists a
+full audit trail to SQLite, and ships with the Streamlit console shown above so a
+human can see exactly what the agents did and why.
 
 ---
 
@@ -264,98 +316,6 @@ deskfleet/
 └── .github/workflows/   ⚙️ ci · code-quality · security · publish-image
                             · release-please · release-image · deploy-cloudrun
 ```
-
----
-
-## 🚀 Project setup
-
-### Prerequisites
-
-| Requirement | Version | Needed for |
-|---|---|---|
-| Python | 3.11+ | API, UI, tests |
-| Docker + Docker Compose | any recent | full-stack run (API + UI + Prometheus + Grafana) |
-| An LLM API key | — | **optional** — live resolution only; the whole test suite and the `REFUSE` path work with no key |
-
-### Step 1 — Clone and install
-
-```bash
-git clone https://github.com/sinalkar/deskfleet.git
-cd deskfleet
-
-python -m venv .venv && source .venv/bin/activate     # recommended
-python -m pip install -r requirements-dev.txt          # API + dev/test deps
-python -m pip install -r apps/ui/requirements.txt      # Streamlit UI deps
-```
-
-### Step 2 — Configure environment
-
-```bash
-cp .env.example .env
-```
-
-Open `.env` and (optionally) set an LLM provider key. The minimal live setup is
-two lines:
-
-```dotenv
-LLM_PROVIDER=openai          # or groq / gemini / nvidia / anthropic / ollama
-OPENAI_API_KEY=sk-...        # the selected provider's key
-```
-
-Everything else has safe defaults — see [Configuration](#-configuration).
-
-### Step 3 — Verify the install (no key needed)
-
-```bash
-make test     # 100+ tests, all green with zero API keys
-make lint     # ruff check .
-```
-
-### Step 4 — Run it
-
-**Option A — local Python processes:**
-
-```bash
-make api    # FastAPI on http://localhost:8080   (/health, /docs, /metrics)
-make ui     # Streamlit on http://localhost:8501  (in a second shell)
-```
-
-**Option B — full stack with Docker Compose:**
-
-```bash
-docker compose up --build
-```
-
-| Service | URL | What you'll see |
-|---|---|---|
-| 🚪 API | http://localhost:8080 | `/docs` (OpenAPI), `/health`, `/metrics` |
-| 🖥️ Streamlit UI | http://localhost:8501 | The chat support console |
-| 📈 Prometheus | http://localhost:9090 | Raw metrics + query explorer |
-| 📊 Grafana (`admin`/`admin`) | http://localhost:3000 | Auto-provisioned **DeskFleet Overview** dashboard |
-
-### Step 5 — Try it
-
-Open the UI and click one of the example ticket chips, or hit the API directly:
-
-```bash
-curl -X POST localhost:8080/resolve -H 'content-type: application/json' \
-  -d '{"ticket":"Where is my order 3?","order_id":"3"}'
-```
-
-Without a configured LLM key, `/health` reports `llm_configured: false`; injection
-tickets still `REFUSE` (the guardrail needs no model) and live tickets degrade
-gracefully to `ESCALATE` with a clear reason — the service never 500s.
-
-| Service | URL | What you'll see |
-|---|---|---|
-| 🚪 API | http://localhost:8080 | `/docs` (OpenAPI), `/health`, `/metrics` |
-| 🖥️ Streamlit UI | http://localhost:8501 | Paste a ticket, watch it resolve live |
-| 📈 Prometheus | http://localhost:9090 | Raw metrics + query explorer |
-| 📊 Grafana (`admin`/`admin`) | http://localhost:3000 | Auto-provisioned **DeskFleet Overview** dashboard |
-
-The Grafana dashboard auto-provisions the Prometheus datasource and shows
-throughput, P50/P99 latency, decision breakdown, cumulative spend, escalation rate,
-tokens, and tool-call counts — no manual setup.
 
 ---
 
@@ -539,7 +499,13 @@ Apart from the optional GCP deploy secrets below, the only secret these workflow
 use is `GITHUB_TOKEN`, provided automatically by GitHub — no additional
 repository secrets are required for CI/CD to pass.
 
-### 🚀 Cloud Run deployment (optional, opt-in)
+Releases follow [Conventional Commits](https://www.conventionalcommits.org/):
+`feat:` → minor bump, `fix:` → patch bump, `feat!:`/`BREAKING CHANGE` → major bump,
+`docs:`/`chore:` → no release. Merging the standing release PR tags the commit,
+publishes the GitHub Release, and triggers `release-image.yml`.
+
+<details>
+<summary><strong>🚀 Cloud Run deployment (optional, opt-in)</strong> — click to expand</summary>
 
 GCP deployment is **fully optional** — the repo stays green with no GCP account.
 `deploy-cloudrun.yml` runs only when *both* are true: the three GCP secrets are
@@ -583,12 +549,10 @@ common cause of a green deploy that serves 503s.
 The immutable SHA image published to `ghcr.io` remains the portable artifact if
 you'd rather roll out to ECS, Kubernetes, or a plain VM instead.
 
-Releases follow [Conventional Commits](https://www.conventionalcommits.org/):
-`feat:` → minor bump, `fix:` → patch bump, `feat!:`/`BREAKING CHANGE` → major bump,
-`docs:`/`chore:` → no release. Merging the standing release PR tags the commit,
-publishes the GitHub Release, and triggers `release-image.yml`.
+</details>
 
-### Required GitHub repository settings
+<details>
+<summary><strong>Required GitHub repository settings</strong> — click to expand</summary>
 
 - **Settings → Actions → General → Workflow permissions:** *Read and write
   permissions*, plus *Allow GitHub Actions to create and approve pull requests*
@@ -598,6 +562,8 @@ publishes the GitHub Release, and triggers `release-image.yml`.
 - **Branch protection on `main`:** require `CodeQL (Python)`, `Dependency Review`,
   `Gitleaks Secret Scan`, `Trivy Filesystem Scan`, and the CI `test` job as status
   checks.
+
+</details>
 
 ---
 
