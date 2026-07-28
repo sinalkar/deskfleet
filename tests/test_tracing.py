@@ -14,6 +14,9 @@ from src.observability import tracing
 
 @pytest.fixture
 def clean_env(monkeypatch):
+    # Reset module-level tracing state so each test is independent.
+    monkeypatch.setattr(tracing, "_configured", False)
+    monkeypatch.setattr(tracing, "_tracing_active", False)
     for var in (
         "LANGCHAIN_TRACING_V2",
         "LANGCHAIN_API_KEY",
@@ -58,6 +61,7 @@ def test_configure_exports_settings_to_environ(clean_env):
     import os
 
     _enable(clean_env)
+    clean_env.setattr(tracing, "_langsmith_reachable", lambda *_, **__: True)
 
     assert tracing.configure_tracing() is True
     assert os.environ["LANGCHAIN_TRACING_V2"] == "true"
@@ -73,9 +77,22 @@ def test_configure_does_not_override_real_environment(clean_env):
 
     clean_env.setenv("LANGCHAIN_PROJECT", "from-cloud-run")
     _enable(clean_env)
+    clean_env.setattr(tracing, "_langsmith_reachable", lambda *_, **__: True)
     tracing.configure_tracing()
 
     assert os.environ["LANGCHAIN_PROJECT"] == "from-cloud-run"
+
+
+def test_configure_disables_tracing_when_endpoint_unreachable(clean_env):
+    """Unreachable LangSmith must not spam SSLEOF warnings on every request."""
+    import os
+
+    _enable(clean_env)
+    clean_env.setattr(tracing, "_langsmith_reachable", lambda *_, **__: False)
+
+    assert tracing.configure_tracing() is False
+    assert os.environ.get("LANGCHAIN_TRACING_V2") == "false"
+    assert tracing.tracing_enabled() is False
 
 
 def test_trace_run_is_a_noop_when_disabled(clean_env):

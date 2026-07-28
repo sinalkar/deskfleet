@@ -71,7 +71,11 @@ def resolve_ticket(graph: Any, request: ResolveRequest) -> ResolveResponse:
     if is_inj:
         # Short-circuit BEFORE any model invocation.
         latency_ms = (time.perf_counter() - started) * 1000
-        reason = f"Prompt-injection pattern detected: {matched}"
+        reason = (
+            "We can't process this request because it appears to contain instructions "
+            "that try to override the agent's behavior (prompt injection). "
+            "Please rephrase your support question and we'll be happy to help."
+        )
         state = {
             "ticket": redacted_ticket,
             "category": None,

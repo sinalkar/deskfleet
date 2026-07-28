@@ -32,14 +32,54 @@ logger = logging.getLogger("deskfleet.tracing")
 ROOT_RUN_NAME = "deskfleet.resolve"
 
 _configured = False
+_tracing_active = False
 
 
-def tracing_enabled() -> bool:
-    """True when tracing is switched on *and* a credential is present."""
+def _settings_want_tracing() -> bool:
+    """True when settings ask for tracing *and* a real credential is present."""
     key = settings.langchain_api_key
     if not key or key.startswith("lsv2_..."):  # ignore the .env.example placeholder
         return False
     return bool(settings.langchain_tracing_v2)
+
+
+def tracing_enabled() -> bool:
+    """True when tracing is active.
+
+    Before :func:`configure_tracing` runs this reflects the settings object;
+    afterwards it reflects the result of the startup probe (or explicit env
+    variables in a real deployment).
+    """
+    if _configured:
+        return _tracing_active
+    return _settings_want_tracing()
+
+
+def _langsmith_reachable(endpoint: str, timeout: float = 2.0) -> bool:
+    """Probe the LangSmith API endpoint without sending credentials.
+
+    Returns ``False`` for any SSL, network, timeout, or DNS failure so the
+    service can degrade tracing to a no-op instead of logging repeated
+    warnings on every request.
+    """
+    import urllib.error
+    import urllib.request
+
+    url = endpoint.rstrip("/")
+    try:
+        req = urllib.request.Request(f"{url}/info", method="HEAD")
+        with urllib.request.urlopen(req, timeout=timeout):
+            return True
+    except urllib.error.HTTPError as exc:
+        # Any HTTP response means TLS + TCP are functional.
+        return exc.code < 500
+    except Exception:
+        logger.warning(
+            "LangSmith endpoint %s is unreachable; disabling tracing to avoid SSL warnings",
+            url,
+            exc_info=True,
+        )
+        return False
 
 
 def configure_tracing() -> bool:
@@ -48,16 +88,31 @@ def configure_tracing() -> bool:
     Idempotent. Returns whether tracing ended up enabled. Existing environment
     variables win — a real deployment env (Cloud Run secrets, docker-compose)
     should not be overridden by a stale ``.env``.
-    """
-    global _configured
 
-    if not tracing_enabled():
+    When settings enable tracing but the LangSmith endpoint cannot be reached
+    (e.g. behind a firewall or on a disconnected network), tracing is disabled
+    so the SDK does not emit SSLEOF warnings on every request.
+    """
+    global _configured, _tracing_active
+
+    if not _settings_want_tracing():
+        _tracing_active = False
         # Explicitly off, so a stale env var can't silently enable billing.
         os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
+        os.environ.setdefault("LANGSMITH_TRACING", "false")
         logger.info("LangSmith tracing disabled (no API key or LANGCHAIN_TRACING_V2=false)")
         _configured = True
         return False
 
+    if not _langsmith_reachable(settings.langchain_endpoint):
+        _tracing_active = False
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
+        os.environ.setdefault("LANGSMITH_TRACING", "false")
+        logger.warning("LangSmith tracing disabled (endpoint unreachable)")
+        _configured = True
+        return False
+
+    _tracing_active = True
     os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
     os.environ.setdefault("LANGCHAIN_API_KEY", settings.langchain_api_key)
     os.environ.setdefault("LANGCHAIN_PROJECT", settings.langchain_project)

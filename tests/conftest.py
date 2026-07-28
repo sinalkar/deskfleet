@@ -38,6 +38,22 @@ def _isolated_db(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _disable_langsmith_for_tests(monkeypatch):
+    """Keep tests isolated from any real LangSmith credentials in .env.
+
+    The API startup probe is forced to report unreachable, and module-level
+    tracing state is reset so tests that exercise the enable path can control
+    the outcome explicitly.
+    """
+    from src.observability import tracing
+
+    monkeypatch.setattr(tracing, "_configured", False)
+    monkeypatch.setattr(tracing, "_tracing_active", False)
+    monkeypatch.setattr(tracing, "_langsmith_reachable", lambda *_, **__: False)
+    yield
+
+
 class FakeLLM:
     """Scriptable stand-in for the production LLM client.
 
