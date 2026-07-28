@@ -30,7 +30,7 @@ from src.guardrails.injection import (
 from src.guardrails.pii import redact_pii
 from src.observability import metrics
 from src.observability.costing import Usage, count_tokens, estimate_cost
-from src.observability.tracing import ROOT_RUN_NAME, trace_run
+from src.observability.tracing import ROOT_RUN_NAME, trace_refuse, trace_run
 from src.observability.usage import UsageCollector
 from src.schemas import ResolveRequest, ResolveResponse, ToolCallRecord
 from src.storage import repo
@@ -100,6 +100,7 @@ def resolve_ticket(graph: Any, request: ResolveRequest) -> ResolveResponse:
         _persist(state, ticket_id, latency_ms, 0.0)
         metrics.record_decision(Decision.REFUSE.value)
         metrics.record_latency(latency_ms / 1000)
+        refuse_url = trace_refuse(ticket_id, redacted_ticket, reason)
         return ResolveResponse(
             ticket_id=ticket_id,
             decision=Decision.REFUSE.value,
@@ -108,7 +109,7 @@ def resolve_ticket(graph: Any, request: ResolveRequest) -> ResolveResponse:
             escalation_reason=reason,
             iterations=0,
             tool_calls=[],
-            langsmith_trace_url=None,
+            langsmith_trace_url=refuse_url,
             latency_ms=round(latency_ms, 2),
             cost_usd=0.0,
         )

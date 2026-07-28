@@ -188,6 +188,34 @@ class TraceHandle:
         self.url: str | None = None
 
 
+def trace_refuse(ticket_id: str, ticket: str, reason: str) -> str | None:
+    """Create a manual LangSmith run for a guardrail REFUSE and return its URL.
+
+    The REFUSE path short-circuits before the LangGraph graph, so there is no
+    root run to capture. This posts a small ``deskfleet.refuse`` run so the
+    trace theater still shows the guardrail decision.
+    """
+    if not tracing_enabled():
+        return None
+
+    try:
+        from langsmith.run_trees import RunTree
+
+        run = RunTree(
+            name="deskfleet.refuse",
+            run_type="chain",
+            inputs={"ticket": ticket},
+            outputs={"decision": "REFUSE", "reason": reason},
+            tags=["deskfleet", "refuse", "guardrail"],
+            metadata={"ticket_id": ticket_id},
+        )
+        run.post()
+        return run.get_url()
+    except Exception:  # noqa: BLE001 - tracing must never break resolution
+        logger.warning("failed to create REFUSE trace", exc_info=True)
+        return None
+
+
 @contextmanager
 def trace_run():
     """Run a block with LangSmith run collection, yielding a :class:`TraceHandle`.
