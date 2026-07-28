@@ -9,13 +9,16 @@ boot with **zero** secrets configured.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_REPO_ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_REPO_ROOT_ENV,
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,

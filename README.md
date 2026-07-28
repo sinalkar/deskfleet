@@ -77,12 +77,40 @@ make test
 make lint
 ```
 
+**Using [uv](https://docs.astral.sh/uv/) instead** (faster installs, no separate `pip`/`venv` steps):
+
+```bash
+# 1. Clone and set up venv
+git clone https://github.com/sinalkar/deskfleet.git
+cd deskfleet
+uv venv                                            # creates .venv (py3.11+)
+
+# 2. Install deps into it
+uv pip install -r requirements-dev.txt             # API + dev/test deps
+uv pip install -r apps/ui/requirements.txt         # Streamlit UI deps
+
+# 3. Configure (optional — everything else defaults safely)
+cp .env.example .env
+# LLM_PROVIDER=openai
+# OPENAI_API_KEY=sk-...
+
+# 4. Verify — 100+ tests, all green with zero API keys
+uv run pytest tests/ -v
+uv run ruff check .
+```
+
+No `source .venv/bin/activate` needed — `uv run` picks up `.venv` automatically. On Windows, activate manually first (`.venv\Scripts\activate`) if you want plain `pytest`/`ruff` instead of `uv run`.
+
 **Run it** — local processes, or the full stack:
 
 ```bash
-# Option A — local processes
+# Option A — local processes (plain venv)
 make api    # FastAPI  → http://localhost:8080  (/health, /docs, /metrics)
 make ui     # Streamlit → http://localhost:8501  (second shell)
+
+# Option A2 — local processes (uv)
+cd apps/api && uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8080
+cd apps/ui  && uv run streamlit run app.py --server.port 8501   # second shell
 
 # Option B — Docker Compose (adds Prometheus + Grafana)
 docker compose up --build
