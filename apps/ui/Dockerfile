@@ -1,5 +1,10 @@
 FROM python:3.11-slim
 
+LABEL org.opencontainers.image.title="DeskFleet Support Console" \
+      org.opencontainers.image.description="Streamlit chat console for DeskFleet — paste a ticket, watch the Classifier/Researcher/Responder/Reviewer agents resolve it live." \
+      org.opencontainers.image.source="https://github.com/sinalkar/deskfleet" \
+      org.opencontainers.image.authors="Sanjay Sinalkar"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1

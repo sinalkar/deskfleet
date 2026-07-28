@@ -1,3 +1,15 @@
+[project]
+name = "deskfleet"
+version = "0.2.0"
+description = "Multi-agent support ticket resolver — LangGraph (Classifier → Researcher → Responder → Reviewer) + FastAPI + Streamlit, with prompt-injection defense, PII redaction, LangSmith tracing, and Prometheus/Grafana observability."
+authors = [{ name = "Sanjay Sinalkar" }]
+readme = "README.md"
+requires-python = ">=3.11"
+# No `license` field: the repo has no LICENSE file yet, so declaring one here
+# would be inaccurate. Add a LICENSE file first if you want one recorded.
+# Descriptive metadata only — no [build-system]/packaging table. DeskFleet ships
+# as two Docker images (apps/api, apps/ui), not as an installable PyPI package.
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

@@ -77,8 +77,14 @@ class _LazyGraph:
 def create_app() -> FastAPI:
     app = FastAPI(
         title="DeskFleet",
-        description="Multi-agent support ticket resolver (LangGraph + FastAPI).",
-        version="1.0.0",
+        description=(
+            "Multi-agent support ticket resolver. A LangGraph crew "
+            "(Classifier → Researcher → Responder → Reviewer) resolves tickets "
+            "against a live order API, with prompt-injection defense, PII redaction, "
+            "and full LangSmith tracing."
+        ),
+        # Tracks the release-please-managed version in .github/.release-please-manifest.json.
+        version="0.2.0",
         lifespan=lifespan,
     )
     app.state.graph = None

@@ -1,5 +1,10 @@
 FROM python:3.11-slim
 
+LABEL org.opencontainers.image.title="DeskFleet API" \
+      org.opencontainers.image.description="Multi-agent support ticket resolver (LangGraph + FastAPI): Classifier -> Researcher -> Responder -> Reviewer, with prompt-injection defense, PII redaction, and LangSmith tracing." \
+      org.opencontainers.image.source="https://github.com/sinalkar/deskfleet" \
+      org.opencontainers.image.authors="Sanjay Sinalkar"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
