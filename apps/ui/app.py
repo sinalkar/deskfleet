@@ -67,7 +67,8 @@ st.set_page_config(
 # (bg-primary, text-success, etc.) — no arbitrary Tailwind utility class needed.
 DAISYUI_LINKS = (
     '<link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />'
-    '<link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" rel="stylesheet" type="text/css" />'
+    '<link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" '
+    'rel="stylesheet" type="text/css" />'
 )
 
 APP_CSS = """
@@ -126,13 +127,19 @@ APP_CSS = """
           display:flex; align-items:center; justify-content:space-between;
           gap: 1rem; padding: 1.3rem 1.6rem !important; border-radius: var(--radius-box);
           margin-bottom: 1.4rem; position: relative; overflow: hidden;
-          background: linear-gradient(120deg, var(--df-navy-950) 0%, var(--df-navy-800) 55%, var(--df-indigo-700) 100%);
+          background: linear-gradient(
+              120deg, var(--df-navy-950) 0%, var(--df-navy-800) 55%, var(--df-indigo-700) 100%
+          );
           border: 1px solid rgba(255,255,255,.08);
           box-shadow: 0 8px 30px rgba(11,17,32,.35), inset 0 1px 0 rgba(255,255,255,.06);
       }
       .df-header::before {
           content:""; position:absolute; inset:0; pointer-events:none;
-          background: radial-gradient(600px 200px at 85% -20%, color-mix(in oklch, var(--color-primary) 55%, transparent), transparent 70%);
+          background: radial-gradient(
+              600px 200px at 85% -20%,
+              color-mix(in oklch, var(--color-primary) 55%, transparent),
+              transparent 70%
+          );
       }
       .df-header .brand {display:flex; align-items:center; gap:1rem; position:relative; z-index:1;}
       .df-header .logo {
@@ -144,7 +151,9 @@ APP_CSS = """
           font-size: 1.32rem; font-weight: 800; margin: 0; color: #fff;
           letter-spacing: -.02em;
       }
-      .df-header .tagline {font-size: .84rem; margin: 3px 0 0; color: rgba(255,255,255,.68); font-weight: 400;}
+      .df-header .tagline {
+          font-size: .84rem; margin: 3px 0 0; color: rgba(255,255,255,.68); font-weight: 400;
+      }
       .df-header .badge {position: relative; z-index: 1;}
 
 /* ── top status bar (health + session stats, under the header) ─────── */
@@ -263,9 +272,8 @@ def render_result(result: dict) -> None:
             with st.expander("Draft prepared before escalation"):
                 st.write(result["reply"])
     elif decision == "REFUSE":
-        st.write(
-            f"**We couldn't process this request.** {result.get('escalation_reason') or 'It was blocked by our safety guardrails.'}"
-        )
+        reason = result.get("escalation_reason") or "It was blocked by our safety guardrails."
+        st.write(f"**We couldn't process this request.** {reason}")
     else:
         st.write("_Unexpected response from the API._")
 
@@ -384,10 +392,10 @@ def sidebar() -> None:
     with st.sidebar:
         if LOGO_URI:
             st.markdown(
-                f'<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.1rem;">'
+                '<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.1rem;">'
                 f'<img src="{LOGO_URI}" style="width:34px;height:34px;border-radius:9px;" />'
-                f'<span style="font-size:1.15rem;font-weight:800;letter-spacing:-.02em;">DeskFleet</span>'
-                f"</div>",
+                '<span style="font-size:1.15rem;font-weight:800;letter-spacing:-.02em;">'
+                "DeskFleet</span></div>",
                 unsafe_allow_html=True,
             )
         else:
@@ -425,8 +433,9 @@ def sidebar() -> None:
                 if t.get("escalation_reason"):
                     body.append(f"<b>Reason:</b> {html.escape(t['escalation_reason'])}")
                 items.append(
-                    '<details class="df-collapse collapse collapse-arrow bg-base-100 border border-base-300">'
-                    f'<summary class="collapse-title text-xs font-medium">'
+                    '<details class="df-collapse collapse collapse-arrow '
+                    'bg-base-100 border border-base-300">'
+                    '<summary class="collapse-title text-xs font-medium">'
                     f"{style['emoji']} {snippet}</summary>"
                     f'<div class="collapse-content text-xs">{"<br/>".join(body)}</div>'
                     "</details>"
@@ -469,7 +478,8 @@ def main() -> None:
                         with a full audit trail</p>
                 </div>
             </div>
-            <span class="badge badge-lg badge-outline" style="border-color:rgba(255,255,255,.24);color:rgba(255,255,255,.85);">
+            <span class="badge badge-lg badge-outline"
+                  style="border-color:rgba(255,255,255,.24);color:rgba(255,255,255,.85);">
                 Classifier → Researcher → Responder → Reviewer</span>
         </div>
         """,

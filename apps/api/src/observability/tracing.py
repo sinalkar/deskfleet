@@ -68,7 +68,9 @@ def _langsmith_reachable(endpoint: str, timeout: float = 2.0) -> bool:
     url = endpoint.rstrip("/")
     try:
         req = urllib.request.Request(f"{url}/info", method="HEAD")
-        with urllib.request.urlopen(req, timeout=timeout):
+        # `endpoint` is operator-controlled config (LANGCHAIN_ENDPOINT / .env),
+        # never derived from ticket or request input.
+        with urllib.request.urlopen(req, timeout=timeout):  # nosec B310
             return True
     except urllib.error.HTTPError as exc:
         # Any HTTP response means TLS + TCP are functional.
