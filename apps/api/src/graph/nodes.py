@@ -25,15 +25,15 @@ def make_classifier(llm: LLMClient) -> Callable[[TicketState], dict[str, Any]]:
         if category not in {c.value for c in Category}:
             category = Category.OTHER.value
 
-        # Out-of-scope tickets are refused before any research/respond/review
-        # work, saving LLM calls and matching the README decision table.
+        # Out-of-scope tickets are escalated before any research/respond/review
+        # work, saving LLM calls while still handing ambiguous cases to a human.
         if category == Category.OTHER.value:
             return {
                 "category": category,
-                "decision": Decision.REFUSE.value,
+                "decision": Decision.ESCALATE.value,
                 "escalation_reason": (
                     "Out of scope: the ticket does not match a supported category "
-                    "(order, product, or refund). Refused before agent processing."
+                    "(order, product, or refund). Escalated to a human agent."
                 ),
             }
         return {"category": category}
