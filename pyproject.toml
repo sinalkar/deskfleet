@@ -5,8 +5,7 @@ description = "Multi-agent support ticket resolver — LangGraph (Classifier →
 authors = [{ name = "Sanjay Sinalkar" }]
 readme = "README.md"
 requires-python = ">=3.11"
-# No `license` field: the repo has no LICENSE file yet, so declaring one here
-# would be inaccurate. Add a LICENSE file first if you want one recorded.
+license = { text = "MIT" }
 # Descriptive metadata only — no [build-system]/packaging table. DeskFleet ships
 # as two Docker images (apps/api, apps/ui), not as an installable PyPI package.
 

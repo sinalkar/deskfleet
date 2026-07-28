@@ -8,6 +8,7 @@
 ![Prometheus](https://img.shields.io/badge/Metrics-Prometheus-E6522C?logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Dashboards-Grafana-F46800?logo=grafana&logoColor=white)
 [![CI](https://github.com/sinalkar/deskfleet/actions/workflows/ci.yml/badge.svg)](https://github.com/sinalkar/deskfleet/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **LangGraph + FastAPI + Streamlit · monorepo · Docker Compose · GitHub Actions → GHCR**
 
@@ -625,3 +626,5 @@ Built with: [LangGraph](https://langchain-ai.github.io/langgraph/) ·
 [Prometheus](https://prometheus.io/) · [Grafana](https://grafana.com/) ·
 [LangSmith](https://smith.langchain.com/) ·
 [FakeStoreAPI](https://fakestoreapi.com/) (external order/product data).
+
+Licensed under the [MIT License](LICENSE).
