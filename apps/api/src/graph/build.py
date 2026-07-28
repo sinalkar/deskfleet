@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from src.graph.edges import route_after_review
+from src.graph.edges import route_after_classifier, route_after_review
 from src.graph.llm import LLMClient, build_llm_client
 from src.graph.nodes import (
     make_classifier,
@@ -39,7 +39,11 @@ def compile_graph(llm: LLMClient | None = None):
     graph.add_node("reviewer", make_reviewer(client))  # type: ignore[call-overload]
 
     graph.add_edge(START, "classifier")
-    graph.add_edge("classifier", "researcher")
+    graph.add_conditional_edges(
+        "classifier",
+        route_after_classifier,
+        {"researcher": "researcher", END: END},
+    )
     graph.add_edge("researcher", "responder")
     graph.add_edge("responder", "reviewer")
     graph.add_conditional_edges(

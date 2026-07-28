@@ -13,8 +13,20 @@ from __future__ import annotations
 from langgraph.graph import END
 
 from src.config import settings
-from src.constants import Decision
+from src.constants import Category, Decision
 from src.graph.state import TicketState
+
+
+def route_after_classifier(state: TicketState) -> str:
+    """Return the next node name: ``"researcher"`` or ``END``.
+
+    Tickets classified as ``other`` are out of scope for the supported
+    categories (order, product, refund). They are escalated immediately
+    without consuming LLM calls on the research/respond/review pipeline.
+    """
+    if state.get("category") == Category.OTHER.value:
+        return END
+    return "researcher"
 
 
 def route_after_review(state: TicketState) -> str:

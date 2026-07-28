@@ -60,3 +60,20 @@ def test_approved_draft_resolves_without_escalation(make_graph):
     assert out["decision"] == Decision.RESOLVED.value
     assert out["iterations"] == 1
     assert llm.calls.count("review") == 1
+
+
+def test_out_of_scope_category_escalates_immediately(make_graph):
+    """Out-of-scope tickets are escalated after the classifier, before the pipeline."""
+    from tests.conftest import FakeLLM
+
+    llm = FakeLLM(category="other")
+    graph = make_graph(llm)
+
+    out = _run(graph)
+
+    assert out["decision"] == Decision.ESCALATE.value
+    assert out["category"] == "other"
+    assert "out of scope" in (out["escalation_reason"] or "").lower()
+    assert out["iterations"] == 0
+    # Only the classifier ran; no research/respond/review work was done.
+    assert llm.calls == ["classify"]
