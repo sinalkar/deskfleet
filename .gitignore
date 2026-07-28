@@ -31,3 +31,11 @@ uploads/
 .DS_Store
 .idea/
 .vscode/
+
+.claude/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.windsurfrules
+.cursorrules
+

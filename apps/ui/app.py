@@ -11,8 +11,10 @@ ticket-per-turn console with a chat UI, not a stateful conversation agent.
 
 from __future__ import annotations
 
+import base64
 import os
 from datetime import datetime
+from pathlib import Path
 
 import requests
 import streamlit as st
@@ -20,12 +22,27 @@ import streamlit as st
 API_URL = os.getenv("API_URL", "http://localhost:8080").rstrip("/")
 REQUEST_TIMEOUT = 300
 
+ASSETS_DIR = Path(__file__).parent / "assets"
+FAVICON_PATH = ASSETS_DIR / "favicon.png"
+LOGO_PATH = ASSETS_DIR / "logo.png"
+PAGE_ICON = str(FAVICON_PATH) if FAVICON_PATH.exists() else "🎟️"
+
+
+def _logo_data_uri() -> str | None:
+    if not LOGO_PATH.exists():
+        return None
+    encoded = base64.b64encode(LOGO_PATH.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+LOGO_URI = _logo_data_uri()
+
 DECISION_STYLES = {
-    "RESOLVED": {"color": "#1a7f37", "bg": "#dafbe1", "emoji": "✅", "label": "Resolved"},
-    "ESCALATE": {"color": "#9a6700", "bg": "#fff8c5", "emoji": "⚠️", "label": "Escalated"},
-    "REFUSE": {"color": "#cf222e", "bg": "#ffebe9", "emoji": "⛔", "label": "Refused"},
+    "RESOLVED": {"color": "#0d7a41", "bg": "#e4f8ec", "emoji": "✅", "label": "Resolved"},
+    "ESCALATE": {"color": "#a15c00", "bg": "#fff3d6", "emoji": "⚠️", "label": "Escalated"},
+    "REFUSE": {"color": "#c22036", "bg": "#fde8e9", "emoji": "⛔", "label": "Refused"},
 }
-DEFAULT_STYLE = {"color": "#57606a", "bg": "#f6f8fa", "emoji": "❓", "label": "Unknown"}
+DEFAULT_STYLE = {"color": "#57606a", "bg": "#f1f3f6", "emoji": "❓", "label": "Unknown"}
 
 EXAMPLE_TICKETS = [
     ("📦 Order status", "Where is my order 3? It's been two weeks.", "3"),
@@ -37,7 +54,7 @@ EXAMPLE_TICKETS = [
 
 st.set_page_config(
     page_title="DeskFleet · Support Console",
-    page_icon="🎟️",
+    page_icon=PAGE_ICON,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -45,66 +62,126 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-      #MainMenu, footer, header {visibility: hidden;}
-      .block-container {padding-top: 1.2rem; padding-bottom: 5rem; max-width: 960px;}
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+      :root {
+          --df-navy-950: #0b1120;
+          --df-navy-900: #101828;
+          --df-navy-800: #1d2939;
+          --df-indigo-700: #2a3a55;
+          --df-accent: #4f6bff;
+          --df-accent-soft: rgba(79,107,255,.12);
+          --df-border: rgba(128,140,160,.18);
+          --df-radius-lg: 18px;
+          --df-radius-md: 12px;
+          --df-radius-sm: 8px;
+      }
+
+      html, body, [class*="css"] {
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+
+      #MainMenu, footer {visibility: hidden;}
+      /* Keep the header element (it hosts the sidebar collapse/expand control —
+         hiding it entirely traps users once the sidebar is closed). Just blend
+         it into the page instead of fully removing it. */
+      header[data-testid="stHeader"] {
+          background: transparent; box-shadow: none; height: 3rem;
+      }
+      .block-container {padding-top: .6rem; padding-bottom: 5rem; max-width: 1000px;}
 
       /* ── product header ─────────────────────────────────────────────── */
       .df-header {
           display:flex; align-items:center; justify-content:space-between;
-          gap: 1rem; padding: 1.1rem 1.4rem; border-radius: 16px;
-          margin-bottom: 1.1rem;
-          background: linear-gradient(120deg, #101828 0%, #1d2939 55%, #2a3a55 100%);
-          border: 1px solid rgba(255,255,255,.07);
-          box-shadow: 0 4px 24px rgba(16,24,40,.25);
+          gap: 1rem; padding: 1.3rem 1.6rem; border-radius: var(--df-radius-lg);
+          margin-bottom: 1.4rem; position: relative; overflow: hidden;
+          background: linear-gradient(120deg, var(--df-navy-950) 0%, var(--df-navy-800) 55%, var(--df-indigo-700) 100%);
+          border: 1px solid rgba(255,255,255,.08);
+          box-shadow: 0 8px 30px rgba(11,17,32,.35), inset 0 1px 0 rgba(255,255,255,.06);
       }
-      .df-header .brand {display:flex; align-items:center; gap:.85rem;}
+      .df-header::before {
+          content:""; position:absolute; inset:0; pointer-events:none;
+          background: radial-gradient(600px 200px at 85% -20%, rgba(79,107,255,.28), transparent 70%);
+      }
+      .df-header .brand {display:flex; align-items:center; gap:1rem; position:relative; z-index:1;}
       .df-header .logo {
-          width: 44px; height: 44px; border-radius: 12px; flex: none;
-          display:flex; align-items:center; justify-content:center;
-          font-size: 1.5rem; background: rgba(255,255,255,.09);
-          border: 1px solid rgba(255,255,255,.12);
+          width: 46px; height: 46px; border-radius: 13px; flex: none;
+          object-fit: cover; display: block;
+          box-shadow: 0 4px 14px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.15);
       }
       .df-header h1 {
-          font-size: 1.28rem; font-weight: 700; margin: 0; color: #fff;
-          letter-spacing: -.01em;
+          font-size: 1.32rem; font-weight: 800; margin: 0; color: #fff;
+          letter-spacing: -.02em;
       }
-      .df-header .tagline {font-size: .82rem; margin: 2px 0 0; color: rgba(255,255,255,.65);}
+      .df-header .tagline {font-size: .84rem; margin: 3px 0 0; color: rgba(255,255,255,.68); font-weight: 400;}
       .df-header .pipeline {
-          font-size: .74rem; color: rgba(255,255,255,.55);
-          padding: 4px 10px; border: 1px solid rgba(255,255,255,.14);
-          border-radius: 999px; white-space: nowrap;
+          font-size: .74rem; font-weight: 500; color: rgba(255,255,255,.72);
+          padding: 6px 14px; border: 1px solid rgba(255,255,255,.16);
+          border-radius: 999px; white-space: nowrap; position: relative; z-index: 1;
+          background: rgba(255,255,255,.05); backdrop-filter: blur(4px);
       }
 
       /* ── decision + metric chips ────────────────────────────────────── */
       .df-pill {
           display:inline-flex; align-items:center; gap:.4rem;
-          padding: 3px 12px; border-radius: 999px;
-          font-size: .8rem; font-weight: 600;
+          padding: 4px 13px; border-radius: 999px;
+          font-size: .8rem; font-weight: 700; letter-spacing: -.01em;
       }
-      .df-chips {display:flex; gap:.45rem; flex-wrap:wrap; margin:.5rem 0 .1rem;}
+      .df-chips {display:flex; gap:.5rem; flex-wrap:wrap; margin:.6rem 0 .15rem;}
       .df-chip {
-          background: rgba(128,140,160,.12);
-          border: 1px solid rgba(128,140,160,.18);
-          border-radius: 8px; padding: 4px 10px; font-size: .76rem;
-          color: inherit; opacity: .9;
+          background: var(--df-accent-soft);
+          border: 1px solid rgba(79,107,255,.2);
+          border-radius: var(--df-radius-sm); padding: 5px 11px; font-size: .76rem;
+          font-weight: 500; color: inherit; font-family: 'JetBrains Mono', monospace;
+      }
+
+      /* ── chat bubbles ────────────────────────────────────────────────── */
+      [data-testid="stChatMessage"] {
+          border-radius: var(--df-radius-md);
+          border: 1px solid var(--df-border);
+          box-shadow: 0 2px 10px rgba(16,24,40,.05);
+          padding: .3rem .2rem;
+      }
+
+      /* ── generic card polish ─────────────────────────────────────────── */
+      div[data-testid="stExpander"] {
+          border-radius: var(--df-radius-md) !important;
+          border: 1px solid var(--df-border) !important;
+      }
+      .stButton button, .stLinkButton a {
+          border-radius: var(--df-radius-sm) !important;
+          font-weight: 600 !important;
+          transition: transform .12s ease, box-shadow .12s ease;
+      }
+      .stButton button:hover, .stLinkButton a:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(79,107,255,.18);
       }
 
       /* ── sidebar polish ─────────────────────────────────────────────── */
-      .df-status {display:flex; align-items:center; gap:.5rem; font-size:.86rem;}
-      .df-dot {width:9px; height:9px; border-radius:50%; flex:none;}
-      .df-stat-grid {display:flex; gap:.4rem; margin:.3rem 0;}
-      .df-stat {
-          flex:1; text-align:center; padding:.45rem .2rem; border-radius:10px;
-          background: rgba(128,140,160,.10); border:1px solid rgba(128,140,160,.16);
+      section[data-testid="stSidebar"] {
+          border-right: 1px solid var(--df-border);
       }
-      .df-stat .n {font-size:1.05rem; font-weight:700; line-height:1.1;}
-      .df-stat .l {font-size:.66rem; opacity:.7; text-transform:uppercase; letter-spacing:.04em;}
+      .df-status {display:flex; align-items:center; gap:.55rem; font-size:.87rem; font-weight: 500;}
+      .df-dot {width:9px; height:9px; border-radius:50%; flex:none;}
+      .df-stat-grid {display:flex; gap:.5rem; margin:.4rem 0;}
+      .df-stat {
+          flex:1; text-align:center; padding:.55rem .3rem; border-radius:var(--df-radius-sm);
+          background: rgba(128,140,160,.08); border:1px solid var(--df-border);
+          transition: border-color .15s ease;
+      }
+      .df-stat .n {font-size:1.15rem; font-weight:800; line-height:1.1; letter-spacing:-.02em;}
+      .df-stat .l {font-size:.65rem; opacity:.65; text-transform:uppercase; letter-spacing:.06em; font-weight:600;}
 
       .df-footer {
-          margin-top: 2.2rem; padding-top: .9rem; text-align:center;
-          border-top: 1px solid rgba(128,140,160,.2);
-          font-size: .74rem; opacity: .65; line-height: 1.5;
+          margin-top: 2.4rem; padding-top: 1rem; text-align:center;
+          border-top: 1px solid var(--df-border);
+          font-size: .76rem; opacity: .6; line-height: 1.6; font-weight: 500;
       }
+
+      ::-webkit-scrollbar {width: 8px; height: 8px;}
+      ::-webkit-scrollbar-thumb {background: rgba(128,140,160,.35); border-radius: 999px;}
+      ::-webkit-scrollbar-thumb:hover {background: rgba(128,140,160,.55);}
     </style>
     """,
     unsafe_allow_html=True,
@@ -241,7 +318,16 @@ def session_stats() -> dict[str, int]:
 
 def sidebar() -> None:
     with st.sidebar:
-        st.markdown("### 🎟️ DeskFleet")
+        if LOGO_URI:
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.1rem;">'
+                f'<img src="{LOGO_URI}" style="width:34px;height:34px;border-radius:9px;" />'
+                f'<span style="font-size:1.15rem;font-weight:800;letter-spacing:-.02em;">DeskFleet</span>'
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown("### 🎟️ DeskFleet")
         st.caption("Multi-agent support ticket resolver")
 
         health, err = _api_get("/health")
@@ -252,7 +338,7 @@ def sidebar() -> None:
                 unsafe_allow_html=True,
             )
         else:
-            dot = "#1a7f37" if health.get("llm_configured") else "#9a6700"
+            dot = "#0d7a41" if health.get("llm_configured") else "#a15c00"
             llm = "live LLM" if health.get("llm_configured") else "demo mode (no key)"
             tracing = " · tracing on" if health.get("tracing_enabled") else ""
             st.markdown(
@@ -268,9 +354,9 @@ def sidebar() -> None:
             f'<div class="df-stat"><div class="n" style="color:{color}">{stats[key]}</div>'
             f'<div class="l">{label}</div></div>'
             for key, label, color in (
-                ("RESOLVED", "Resolved", "#1a7f37"),
-                ("ESCALATE", "Escalated", "#9a6700"),
-                ("REFUSE", "Refused", "#cf222e"),
+                ("RESOLVED", "Resolved", "#0d7a41"),
+                ("ESCALATE", "Escalated", "#a15c00"),
+                ("REFUSE", "Refused", "#c22036"),
             )
         )
         st.markdown(f'<div class="df-stat-grid">{cells}</div>', unsafe_allow_html=True)
@@ -325,11 +411,16 @@ def main() -> None:
 
     sidebar()
 
+    logo_html = (
+        f'<img class="logo" src="{LOGO_URI}" alt="DeskFleet logo" />'
+        if LOGO_URI
+        else '<div class="logo">🎟️</div>'
+    )
     st.markdown(
-        """
+        f"""
         <div class="df-header">
             <div class="brand">
-                <div class="logo">🎟️</div>
+                {logo_html}
                 <div>
                     <h1>DeskFleet Support Console</h1>
                     <p class="tagline">Every ticket resolved, escalated, or refused —
