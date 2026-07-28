@@ -207,7 +207,9 @@ def trace_refuse(ticket_id: str, ticket: str, reason: str) -> str | None:
             inputs={"ticket": ticket},
             outputs={"decision": "REFUSE", "reason": reason},
             tags=["deskfleet", "refuse", "guardrail"],
-            metadata={"ticket_id": ticket_id},
+            # RunTree has no top-level `metadata` field in this langsmith
+            # version — it nests under `extra["metadata"]` by convention.
+            extra={"metadata": {"ticket_id": ticket_id}},
         )
         run.post()
         return run.get_url()
